@@ -27,6 +27,7 @@ def observe(runner=run, finder=trusted_executable):
     if reboot:
         try:
             check = runner([reboot, '-r'])
+            result['reboot_probe_exit_code'] = check.returncode
             if check.returncode == 0:
                 result.update(reboot_status='not_indicated', priority='none', reason='needs_restarting_no_hint')
             elif check.returncode == 1 and check.stdout.strip():

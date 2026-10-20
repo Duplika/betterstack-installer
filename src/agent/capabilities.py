@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 
-VERSION = '4.0.0-rc3'
+VERSION = '4.0.0-rc4'
 SCHEMA = 1
 MAX_OUTPUT = 8 * 1024 * 1024
 
@@ -19,12 +19,22 @@ def trusted_executable(name):
     value = shutil.which(name, path='/usr/sbin:/usr/bin:/sbin:/bin')
     if not value:
         return None
-    path = Path(value).resolve()
+    invoked = Path(value)
+    path = invoked.resolve()
     for item in (path, *path.parents):
         st = item.stat()
         if st.st_uid != 0 or st.st_mode & 0o022:
             raise ProbeError('unsafe_executable:' + name)
-    return str(path)
+    # Multiplexers such as dnf-utils select a subcommand from argv[0].
+    # Validate both routes, but invoke the original trusted command name.
+    for item in (invoked, *invoked.parents):
+        st = item.lstat()
+        if st.st_uid != 0 or (not item.is_symlink() and st.st_mode & 0o022):
+            raise ProbeError('unsafe_executable:' + name)
+        target = item.stat()
+        if target.st_uid != 0 or target.st_mode & 0o022:
+            raise ProbeError('unsafe_executable:' + name)
+    return str(invoked)
 
 
 def run(args, timeout=20):

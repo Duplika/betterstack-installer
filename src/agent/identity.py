@@ -126,7 +126,7 @@ def status(publish=False):
         'source_id': meta['target']['source_id'],
         'template_id': 'cloudlinux-cpanel-multisite' if meta['capabilities']['os_id'] == 'cloudlinux' else 'almalinux-cpanel-wordpress',
         'installer_version': meta['installer_version'],
-        'agent_version': VERSION, 'template_version': '4', 'configuration_schema': SCHEMA,
+        'agent_version': meta['agent_version'], 'template_version': '4', 'configuration_schema': SCHEMA,
         'vector_version': vector_version, 'capabilities': meta['capabilities'],
         'pipeline_variant': meta['pipeline_variant'],
         'drift_detected': drift, 'version_status': 'drift' if drift else 'matches_reviewed_baseline',
