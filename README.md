@@ -1,0 +1,1 @@
+# betterstack-installer
