@@ -1,0 +1,25 @@
+{
+  "version": "4.0.0-rc3",
+  "channel": "candidate",
+  "contains_credentials": false,
+  "remote_verified": false,
+  "installer_sha256": "bfca089d9d75cca24d5a59e570dfb271c34c880335afff815927e6fe2de72da9",
+  "payload_sha256": "4a77b99be0dda0856adeabc1a50377ce23a63cd9581e92037bd4f0efbc3f4fa5",
+  "files": {
+    "capabilities.py": "83470232775b160735e051593f8e1262779ad272c40221e7bdaccd19d12b4d65",
+    "collector.py": "f772e34ef08aba3af48386ccf0b501e7311690d0918ac65d457dce35ff8d9693",
+    "config.py": "eed4b0d7534cc9a7904f85f1222f52d345d8b4350301dd6671d55c38dd0c56bc",
+    "health.py": "f062e0cdca2322db7f7e63b82f567baeeda0a4bfff3f544798a4ecbef7d8592f",
+    "identity.py": "b2688d6073b8ea8e647e0fa7a47b62cabcf8893dd48cf51c7f7cbe8c429d9b07",
+    "install_base.py": "36abacd4cd57b9c255a4decb1bd889ae3c3666418dbbc49d20e4bae84a030fab",
+    "installer.py": "046d032db0bc5730529054018298bdf0414b6506a4f3c064c5eb463d8ffc0538",
+    "legacy_alma_acl.py": "cb576bf12e278b2390567eba7f3fc857cbdf03c455e14fbe4c51060efb03eb79",
+    "legacy_alma_profile.py": "db5baf003bc3e84974536e202b285355d0d1f2d6d25f1e6943d7c54dac8b0096",
+    "legacy_cloud_collector.py": "4e021208d7b9c325ca85d21250f1d1d1e98df3d2f526d2d746a31975fa2bcb40",
+    "legacy_cloud_config.py": "eed4b0d7534cc9a7904f85f1222f52d345d8b4350301dd6671d55c38dd0c56bc",
+    "legacy_context_acl.py": "1185cff3a9eb6f6d20b8ddc347a17e5592ffc101a0f0383d86f5e89c804940e4",
+    "legacy_context_reader.py": "581d53530145a7a979557846bfa6c3b1957950331e463b5ba30cc9983950b2cc",
+    "legacy_context_reference.py": "bacdcbdeb1eec79f5e14c929f94902d0654bc9360e838fffc4220e1e1cb10a2d",
+    "legacy_identity.py": "7093a3d34b253d67d6d1004a9ea93d54088a9129050e1ac804c537f81f0f10f1"
+  }
+}

@@ -1,4 +1,4 @@
-# 4.0.0-rc2 — candidata pública
+# 4.0.0-rc3 — candidata pública
 
 Primer instalador público sin perfiles reales ni credenciales, con build reproducible y verificación previa a ejecución. Detección automática AlmaLinux/CloudLinux, edición Solo sin LVE, monitoreo acotado, identidad de versiones y observaciones KernelCare/reinicio.
 

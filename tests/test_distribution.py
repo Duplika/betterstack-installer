@@ -41,4 +41,26 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(p.stat().st_mode&0o777,0o600)
             self.assertNotIn('TEST_SECRET',str(output.call_args_list))
 
+class PackagingTests(unittest.TestCase):
+    def test_gzip_header_is_normalized_across_python_variants(self):
+        import base64
+        import importlib.util
+        root=Path(__file__).resolve().parents[1]
+        spec=importlib.util.spec_from_file_location('public_builder',root/'scripts/build.py')
+        builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
+        original=builder.gzip.compress
+        with tempfile.TemporaryDirectory() as directory:
+            variants=[]
+            for os_byte in (3,255):
+                def compress(data,mtime=0):
+                    value=original(data,mtime=mtime)
+                    return value[:9]+bytes([os_byte])+value[10:]
+                output=Path(directory)/str(os_byte)
+                with patch.object(builder.gzip,'compress',side_effect=compress):
+                    variants.append(builder.build(output))
+                body=(output/'installer.sh').read_text()
+                raw=base64.b64decode(body.split("<<'DUPLIKA_4_PAYLOAD'\n",1)[1].split('DUPLIKA_4_PAYLOAD',1)[0])
+                self.assertEqual(raw[9],255)
+            self.assertEqual(variants[0],variants[1])
+
 if __name__=='__main__':unittest.main()

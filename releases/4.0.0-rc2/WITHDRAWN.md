@@ -1,0 +1,1 @@
+Superseded by 4.0.0-rc3. Python 3.9 and 3.12 produced a different gzip header byte. Functional tests passed but cross-version reproducible-build verification failed. No remote acceptance was recorded. Do not use this candidate for a new installation.

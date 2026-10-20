@@ -39,6 +39,8 @@ def build(directory):
             info.size, info.mode, info.mtime = len(data), 0o600, 0
             archive.addfile(info, io.BytesIO(data))
     payload = gzip.compress(stream.getvalue(), mtime=0)
+    # RFC 1952 OS byte varies across Python releases; canonicalize to unknown.
+    payload = payload[:9] + bytes([255]) + payload[10:]
     payload_sha = hashlib.sha256(payload).hexdigest()
     script = '''#!/bin/bash
 # Duplika Better Stack __VERSION__. Public code; no credentials embedded.
