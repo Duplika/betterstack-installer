@@ -89,6 +89,7 @@ class ExecutableTests(unittest.TestCase):
                     capabilities.trusted_executable('needs-restarting')
 
 class CandidateUpgradeTests(unittest.TestCase):
+    previous_version='4.0.0-rc3'
     def setUp(self):
         import ast, base64, contextlib, io, tarfile
         self.stack=contextlib.ExitStack();self.addCleanup(self.stack.close)
@@ -103,7 +104,7 @@ class CandidateUpgradeTests(unittest.TestCase):
             self.stack.enter_context(patch.object(installer,name,folder))
         self.stack.enter_context(patch.object(identity,'BASE',installer.BASE))
         self.stack.enter_context(patch.object(identity,'STATE',installer.STATE))
-        script=(Path(__file__).parents[1]/'releases/4.0.0-rc3/installer.sh').read_text()
+        script=(Path(__file__).parents[1]/('releases/'+self.previous_version+'/installer.sh')).read_text()
         payload=base64.b64decode(script.split("<<'DUPLIKA_4_PAYLOAD'\n",1)[1].split('DUPLIKA_4_PAYLOAD',1)[0])
         with tarfile.open(fileobj=io.BytesIO(payload),mode='r:gz') as archive:
             files={member.name:archive.extractfile(member).read() for member in archive}
@@ -114,13 +115,13 @@ class CandidateUpgradeTests(unittest.TestCase):
         for node in activate.body:
             if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) and node.targets[0].id in ('service','timer'):
                 (installer.UNITS/(installer.NAME+'.'+node.targets[0].id)).write_text(ast.literal_eval(node.value))
-        for path in installer.rc3_base_paths():
+        for path in installer.observer_base_paths():
             if not path.exists():path.write_text('{}')
         (installer.CLOUD/'vector.json').write_text(json.dumps(__import__('config').make_config(TARGET,'TEST_SECRET',TARGET['ingesting_host'])))
-        (installer.BASE/'complete').write_text('4.0.0-rc3\n')
+        (installer.BASE/'complete').write_text(self.previous_version+'\n')
         self.caps={'os_id':'cloudlinux','edition':'CloudLinux OS Solo'}
-        paths=installer.rc3_base_paths()+installer.runtime_files()+[installer.UNITS/(installer.NAME+ext) for ext in ('.service','.timer')]
-        self.meta={'agent_version':'4.0.0-rc3','installer_version':'4.0.0-rc3','target':TARGET,'capabilities':self.caps,
+        paths=installer.observer_base_paths()+installer.runtime_files()+[installer.UNITS/(installer.NAME+ext) for ext in ('.service','.timer')]
+        self.meta={'agent_version':self.previous_version,'installer_version':self.previous_version,'target':TARGET,'capabilities':self.caps,
             'configuration_schema':1,'pipeline_variant':'observer-v4','config_path':str(installer.CLOUD/'vector.json'),
             'profile_path':str(installer.CLOUD/'profile.json'),'critical_paths':sorted(map(str,paths)),
             'services':['duplika-betterstack-cloudlinux.service','duplika-cloudlinux-observer.timer',installer.NAME+'.timer'],
@@ -138,7 +139,7 @@ class CandidateUpgradeTests(unittest.TestCase):
     def test_reviewed_rc3_upgrade_preserves_transport_and_state(self):
         checkpoint=self.root/'checkpoint';checkpoint.write_text('keep offsets')
         spool=self.root/'spool';spool.write_text('pending events')
-        preserved={p:p.read_bytes() for p in installer.rc3_base_paths()+[checkpoint,spool]}
+        preserved={p:p.read_bytes() for p in installer.observer_base_paths()+[checkpoint,spool]}
         installer.upgrade(TARGET,self.caps)
         self.assertEqual(installer.load(installer.BASE/'manifest.json')['agent_version'],capabilities.VERSION)
         self.assertEqual((installer.BASE/'complete').read_text(),capabilities.VERSION+'\n')
@@ -177,5 +178,8 @@ class CandidateUpgradeTests(unittest.TestCase):
         self.meta['agent_version']='4.0.0-rc1';self.save_meta()
         with self.assertRaisesRegex(RuntimeError,'unreviewed_v4_version'):
             installer.upgrade(TARGET,self.caps)
+
+class Rc4UpgradeTests(CandidateUpgradeTests):
+    previous_version='4.0.0-rc4'
 
 if __name__=='__main__':unittest.main()

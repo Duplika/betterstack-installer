@@ -56,6 +56,40 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaisesRegex(c.ProbeError,'unsafe_docroot'):c.validate_target(target)
 
 class MaintenanceTests(unittest.TestCase):
+    def test_reboot_logs_are_private_bounded_and_removed(self):
+        observed=[]
+        def runner(args):
+            folder=Path(next(arg.split('=',2)[2] for arg in args if arg.startswith('--setopt=logdir=')))
+            observed.append(folder)
+            self.assertEqual(folder.stat().st_mode & 0o777,0o700)
+            self.assertIn('--cacheonly',args)
+            self.assertIn('--setopt=logfilelevel=0',args)
+            self.assertIn('--setopt=log_size=64k',args)
+            self.assertIn('--setopt=log_rotate=1',args)
+            (folder/'dnf.log').write_text('private diagnostic')
+            return result('Core libraries updated: kernel',1)
+        answer=health.observe(runner,lambda name:'/usr/bin/needs-restarting' if name=='needs-restarting' else None)
+        self.assertEqual(answer['reboot_status'],'indicated')
+        self.assertTrue(observed)
+        self.assertFalse(observed[0].exists())
+        self.assertNotIn('private diagnostic',json.dumps(answer))
+
+    def test_reboot_logs_are_removed_when_probe_raises(self):
+        observed=[]
+        def runner(args):
+            folder=Path(next(arg.split('=',2)[2] for arg in args if arg.startswith('--setopt=logdir=')))
+            observed.append(folder);(folder/'dnf.log').write_text('diagnostic')
+            raise c.ProbeError('timeout:needs-restarting')
+        answer=health.observe(runner,lambda name:'/usr/bin/needs-restarting' if name=='needs-restarting' else None)
+        self.assertEqual(answer['reason'],'reboot_probe_failed')
+        self.assertFalse(observed[0].exists())
+
+    def test_read_only_dnf_failure_is_not_misclassified_as_reboot(self):
+        answer=health.observe(lambda args:result('',1,'Config error: read-only filesystem'),
+            lambda name:'/usr/bin/needs-restarting' if name=='needs-restarting' else None)
+        self.assertEqual(answer['reboot_status'],'unknown')
+        self.assertEqual(answer['reason'],'reboot_probe_failed')
+
     def observe(self,kc=None,reboot=None):
         def finder(name):return '/usr/bin/'+name if (name=='kcarectl' and kc is not None) or (name=='needs-restarting' and reboot is not None) else None
         def runner(args):

@@ -2,7 +2,7 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 9 con cPanel**.
 
-**4.0.0-rc4 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc5 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 ## Qué detecta
 
@@ -16,12 +16,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc4/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc5/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc4/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc5/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -59,7 +59,7 @@ bash /root/installer.sh upgrade --target /root/perfil.json
 bash /root/installer.sh verify
 ```
 
-Migra instalaciones v3 reconocidas y completas, o una instalación nueva observer-v4 de rc3 con código revisado, sin drift y con servicios sanos. La actualización rc3 → rc4 sólo reemplaza la capa de identidad/mantenimiento; conserva el recolector, su perfil, Vector y sus unidades de transporte. Conserva fuente, credenciales, offsets, buffers y pipelines existentes. Las variantes AlmaLinux conservan su pipeline anterior y las extensiones existentes. No convierte cualquier instalación Vector en una instalación administrada.
+Migra instalaciones v3 reconocidas y completas, o una instalación nueva observer-v4 de rc3 o rc4 con código revisado, sin drift y con servicios sanos. La actualización rc3/rc4 → rc5 sólo reemplaza la capa de identidad/mantenimiento; conserva el recolector, su perfil, Vector y sus unidades de transporte. Conserva fuente, credenciales, offsets, buffers y pipelines existentes. Las variantes AlmaLinux conservan su pipeline anterior y las extensiones existentes. No convierte cualquier instalación Vector en una instalación administrada.
 
 `rollback` restaura la última transacción de upgrade sin retroceder checkpoints. `resume` sólo finaliza v4 si una instalación nueva dejó la base completa y su snapshot coincide; no repara estados parciales desconocidos. Migraciones entre versiones v4 distintas necesitan revisión específica.
 

@@ -273,21 +273,23 @@ def finish_install(target, caps):
     write(STATE / 'install-pending.json', identity.canonical({'phase': 'complete', 'target': target}))
 
 
-def rc3_base_paths():
+def observer_base_paths():
     return [CLOUD / 'vector.json', CLOUD / 'profile.json', CLOUD / 'collector.py',
             *[UNITS / name for name in ('duplika-betterstack-cloudlinux.service',
                 'duplika-cloudlinux-observer.service', 'duplika-cloudlinux-observer.timer')]]
 
 
-def validate_rc3_upgrade(target, caps):
-    """Only the reviewed, complete rc3 observer layout can receive this fix."""
+def validate_v4_upgrade(target, caps):
+    """Only reviewed, complete rc3/rc4 observer layouts can receive this fix."""
     old = load(BASE / 'manifest.json')
-    if (old.get('agent_version') != '4.0.0-rc3' or old.get('installer_version') != '4.0.0-rc3'
-            or identity.read(BASE / 'complete') != b'4.0.0-rc3\n'):
+    previous = old.get('agent_version')
+    reviewed_versions = {'4.0.0-rc3': 'upgrade_rc3.json', '4.0.0-rc4': 'upgrade_rc4.json'}
+    if (previous not in reviewed_versions or old.get('installer_version') != previous
+            or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
     if old.get('target') != target or old.get('capabilities') != caps:
         raise RuntimeError('upgrade:target_or_capabilities_changed')
-    expected = rc3_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
+    expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
             or old.get('config_path') != str(CLOUD / 'vector.json')
             or old.get('profile_path') != str(CLOUD / 'profile.json')
@@ -296,7 +298,7 @@ def validate_rc3_upgrade(target, caps):
                 'duplika-cloudlinux-observer.timer', NAME + '.timer']
             or old.get('oneshots') != ['duplika-cloudlinux-observer.service']):
         raise RuntimeError('upgrade:unreviewed_v4_layout')
-    reviewed = load(HERE / 'upgrade_rc3.json')
+    reviewed = load(HERE / reviewed_versions[previous])
     for path in runtime_files() + [CLOUD / 'collector.py', UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]:
         if hashlib.sha256(identity.read(path)).hexdigest() != reviewed[path.name]:
             raise RuntimeError('upgrade:unreviewed_v4_runtime')
@@ -309,8 +311,8 @@ def validate_rc3_upgrade(target, caps):
     return old
 
 
-def upgrade_rc3(target, caps):
-    old = validate_rc3_upgrade(target, caps)
+def upgrade_v4(target, caps):
+    old = validate_v4_upgrade(target, caps)
     identity.status()  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
@@ -319,7 +321,7 @@ def upgrade_rc3(target, caps):
         execute(['systemctl', 'stop', NAME + '.timer', NAME + '.service'])
         activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [name for name in old['services'] if name != NAME + '.timer'],
-            old['oneshots'], rc3_base_paths(), old['vector_binary'], old['pipeline_variant'])
+            old['oneshots'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'])
     except BaseException:
         restore(transaction)
         raise
@@ -332,7 +334,7 @@ def upgrade(target, caps):
             identity.status()
             print('Versión ya instalada; sin cambios.')
             return
-        upgrade_rc3(target, caps)
+        upgrade_v4(target, caps)
         return
     old = validate_migration(target)
     if target.get('wordpress'):
@@ -452,7 +454,7 @@ def main():
                 raise RuntimeError('preflight:target_mismatch')
             previous = load(BASE / 'manifest.json')['agent_version']
             if previous != VERSION:
-                validate_rc3_upgrade(target, caps)
+                validate_v4_upgrade(target, caps)
             identity.status()
         if LEGACY.exists() and not (BASE / 'complete').exists():
             previous = validate_migration(target)['spec']['base_variant']
