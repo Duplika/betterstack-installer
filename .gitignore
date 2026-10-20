@@ -1,0 +1,23 @@
+# Local profiles, credentials, generated work and diagnostics never belong in Git.
+local/
+private/
+secrets/
+out/
+build/
+backups/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+*credential*.json
+*credencial*.json
+fuente.json
+perfil.json
+vector.json
+vector.yaml
+*.log
+*.zip
+*.tgz
+*.tar
+*.pem
+*.key

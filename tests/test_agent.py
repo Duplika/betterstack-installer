@@ -1,0 +1,178 @@
+import copy
+import importlib.util
+import json
+from pathlib import Path
+import subprocess
+import tempfile
+import unittest
+from unittest.mock import patch
+import capabilities as c
+import collector as col
+import config
+import health
+import identity
+import installer
+
+TARGET = {'host':'cloud.example.net','server_ip':'203.0.113.20','source_id':1234568,
+          'ingesting_host':'s1234568.us-west-2a.betterstackdata.com'}
+PROFILE = {k:TARGET[k] for k in ('host','server_ip')}
+SOLO = 'Command is skipped as LVE feature is not supported in current environment\n'
+
+def result(out='', code=0, err=''):
+    return subprocess.CompletedProcess([],code,out,err)
+
+class ProbeTests(unittest.TestCase):
+    def probe(self,distro='cloudlinux',edition='CloudLinux OS Solo',data=SOLO):
+        calls=[]
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'os-release';path.write_text('ID='+distro+'\nVERSION_ID="9.8"\n')
+            def runner(args):
+                calls.append(args)
+                return result(edition if '--detect-edition' in args else '--domains' if '--help' in args else data)
+            answer=c.detect(path,runner,lambda name:'/usr/bin/'+name)
+        return answer,calls
+    def test_solo_skips_lve(self):
+        p,calls=self.probe();self.assertEqual(p['lve_status'],'not_supported');self.assertEqual(len(calls),1)
+    def test_alma_has_no_cloudlinux_probe(self):
+        p,calls=self.probe(distro='almalinux');self.assertEqual(p['lve_status'],'not_applicable');self.assertEqual(calls,[])
+    def test_shared_with_lve(self):
+        p,_=self.probe(edition='CloudLinux OS Shared Pro',data='{"result":"success","users":[]}')
+        self.assertEqual(p['lve_status'],'available');self.assertTrue(p['isolates_supported'])
+    def test_shared_invalid_json_does_not_silently_downgrade(self):
+        with self.assertRaisesRegex(c.ProbeError,'lve:invalid_json'):self.probe(edition='CloudLinux OS Shared Pro')
+    def test_unknown_edition(self):
+        with self.assertRaisesRegex(c.ProbeError,'edition_unrecognized'):self.probe(edition='unknown')
+    def test_stderr_separate_from_json(self):self.assertEqual(c.parse_json(result('{}',err='warning'),'probe'),{})
+    def test_stage_specific_errors_no_private_output(self):
+        for response,message in [(result(),'empty_stdout'),(result('private'),'invalid_json'),(result('private',2),'command_failed:exit=2')]:
+            with self.assertRaisesRegex(c.ProbeError,'lve:'+message) as error:c.parse_json(response,'lve')
+            self.assertNotIn('private',str(error.exception))
+    def test_target_validation(self):
+        c.validate_target(copy.deepcopy(TARGET))
+        for change in ({'source_id':1},{'host':'cloud.example.net\n'},{'server_ip':'wrong'}):
+            with self.assertRaises((RuntimeError,ValueError)):c.validate_target(dict(TARGET,**change))
+    def test_wordpress_unit_injection_rejected(self):
+        target=dict(TARGET,wordpress=[{'user':'account','domain':'example.net','docroot':'/home/account/html\nExecStart=bad','expires_at':'2026-10-21T00:00:00+00:00'}])
+        with self.assertRaisesRegex(c.ProbeError,'unsafe_docroot'):c.validate_target(target)
+
+class MaintenanceTests(unittest.TestCase):
+    def observe(self,kc=None,reboot=None):
+        def finder(name):return '/usr/bin/'+name if (name=='kcarectl' and kc is not None) or (name=='needs-restarting' and reboot is not None) else None
+        def runner(args):
+            if '--status' in args:return result(code=kc)
+            if '--uname' in args:return result('5.14.0-example.x86_64')
+            return result('Reboot required' if reboot==1 else '',reboot)
+        return health.observe(runner,finder)
+    def test_kernelcare_does_not_hide_generic_reboot_hint(self):
+        p=self.observe(0,1);self.assertEqual(p['priority'],'review');self.assertEqual(p['reboot_status'],'indicated');self.assertFalse(p['urgency_verified'])
+    def test_absent_kernelcare_is_not_urgent(self):self.assertEqual(self.observe(None,0)['priority'],'none')
+    def test_pending_patches_are_not_automatic_reboot(self):
+        for code in (1,2,3):
+            p=self.observe(code,0);self.assertEqual(p['priority'],'attention');self.assertEqual(p['reboot_status'],'not_indicated')
+    def test_unknown_does_not_mean_healthy(self):self.assertEqual(self.observe(99,2)['reboot_status'],'unknown')
+
+class CollectorTests(unittest.TestCase):
+    def test_solo_no_lve_command_or_fake_zero(self):
+        out=col.Output(PROFILE,{},now=0)
+        with patch.object(col,'command',side_effect=AssertionError('unexpected')):
+            self.assertEqual(col.collect_lve(out,dict(PROFILE,capabilities={'lve_status':'not_supported'})),'not_supported')
+        self.assertEqual(out.metrics,[]);self.assertEqual(out.logs,[])
+    def test_traffic_counts_preserved(self):
+        state={};logs=[];metrics=[]
+        for now in (60,120,180,240,300):
+            out=col.Output(PROFILE,state,now=now)
+            out.log('site_traffic',site='example.net',user='account',interval_seconds=60,coverage_complete=True,requests=7,errors_5xx=0,breakdown={'route:home':7})
+            out.metric('requests',7/60);logs.extend(out.logs);metrics.extend(out.metrics);state=json.loads(json.dumps(state))
+        self.assertEqual(len(logs),1);self.assertEqual(logs[0]['requests'],35);self.assertEqual(logs[0]['breakdown']['route:home'],35);self.assertEqual(len(metrics),5)
+    def test_5xx_flushes_accumulated_counts(self):
+        state={};fields=dict(site='example.net',user='account',interval_seconds=60,coverage_complete=True,requests=2,breakdown={})
+        col.Output(PROFILE,state,now=60).log('site_traffic',errors_5xx=0,**fields)
+        out=col.Output(PROFILE,state,now=120);out.log('site_traffic',errors_5xx=1,**fields)
+        self.assertEqual(out.logs[0]['requests'],4)
+    def test_blocked_processes_retained(self):
+        state={};col.Output(PROFILE,state,now=0);out=col.Output(PROFILE,state,now=60)
+        out.log('process_sample',state='R');out.log('process_sample',state='D');self.assertEqual(len(out.logs),1)
+    def test_heartbeat_changes_and_recovery(self):
+        state={};logs=[]
+        for now,value in ((0,True),(60,True),(120,'failed'),(180,True)):
+            out=col.Output(PROFILE,state,now=now);out.log('collector_heartbeat',components={'lve':value});logs.extend(out.logs)
+        self.assertEqual(len(logs),3)
+    def test_wordpress_eof_and_privacy(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);log=root/'error_log';log.write_text('PHP Fatal error historical token=private\n')
+            p=dict(PROFILE,wordpress=[{'domain':'example.net','user':'account','docroot':str(root),'expires_at':'2099-01-01T00:00:00+00:00'}]);state={}
+            col.collect_wordpress(col.Output(PROFILE,state),state,p)
+            with log.open('a') as f:f.write('PHP Fatal error new customer@example.net token=private\n')
+            out=col.Output(PROFILE,state);col.collect_wordpress(out,state,p)
+            self.assertEqual(out.logs[0]['counts'],{'fatal':1});self.assertNotIn('private',json.dumps(out.logs));self.assertNotIn('customer@',json.dumps(out.logs))
+    def test_expired_wordpress_not_read(self):
+        p=dict(PROFILE,wordpress=[{'domain':'example.net','user':'account','docroot':'/missing','expires_at':'2000-01-01T00:00:00+00:00'}]);out=col.Output(PROFILE,{})
+        col.collect_wordpress(out,{},p);self.assertEqual(out.logs,[])
+
+class MigrationTests(unittest.TestCase):
+    def test_vector_transport_unchanged(self):
+        path=Path(__file__).parents[1]/'src/legacy/legacy_cloud_config.py';spec=importlib.util.spec_from_file_location('old_config',path);old=importlib.util.module_from_spec(spec);spec.loader.exec_module(old)
+        self.assertEqual(config.make_config(PROFILE,'TEST_SECRET',TARGET['ingesting_host']),old.make_config(PROFILE,'TEST_SECRET',TARGET['ingesting_host']))
+    def test_cross_source_rejected(self):
+        cfg=config.make_config(PROFILE,'TEST_SECRET',TARGET['ingesting_host']);identity.destination(cfg,TARGET);cfg['sinks']['logs']['uri']='https://example.net/'
+        with self.assertRaisesRegex(RuntimeError,'unexpected_destination'):identity.destination(cfg,TARGET)
+    def test_hash_excludes_token_rotation_but_detects_config_change(self):
+        with tempfile.TemporaryDirectory(dir='/root') as d:
+            p=Path(d)/'vector.json';cfg=config.make_config(PROFILE,'TEST_SECRET',TARGET['ingesting_host']);p.write_text(json.dumps(cfg));before=identity.snapshot([str(p)],str(p))
+            for sink in cfg['sinks'].values():sink['auth']['token']='ROTATED_SECRET'
+            p.write_text(json.dumps(cfg));self.assertEqual(before,identity.snapshot([str(p)],str(p)))
+            cfg['sources']['host']['scrape_interval_secs']=10;p.write_text(json.dumps(cfg));self.assertNotEqual(before,identity.snapshot([str(p)],str(p)))
+    def test_rollback_preserves_checkpoints(self):
+        with tempfile.TemporaryDirectory(dir='/root') as d:
+            root=Path(d);state=root/'state';state.mkdir();p=root/'collector.py';p.write_text('old');checkpoint=root/'checkpoint';checkpoint.write_text('keep')
+            with patch.object(installer,'STATE',state),patch.object(installer,'run',return_value=result(code=1)),patch.object(installer,'execute',return_value=result()):
+                record=installer.backup([p,root/'new'],['test.timer']);p.write_text('new');(root/'new').write_text('new');installer.restore(record)
+            self.assertEqual(p.read_text(),'old');self.assertEqual(checkpoint.read_text(),'keep');self.assertFalse((root/'new').exists())
+    def test_unknown_legacy_not_adopted(self):
+        with tempfile.TemporaryDirectory(dir='/root') as d:
+            root=Path(d);(root/'complete').write_text('yes');old={'spec':{'target':dict(TARGET,template_version='3'),'base_variant':'unknown'}}
+            with patch.object(installer,'LEGACY',root),patch.object(installer,'load',return_value=old):
+                with self.assertRaisesRegex(RuntimeError,'unknown_layout'):installer.validate_migration(TARGET)
+
+
+class ReviewedMigrationTests(unittest.TestCase):
+    def old(self,variant):
+        paths={'cloudlinux-v2':('/etc/duplika-betterstack-cloudlinux/vector.json','/etc/duplika-betterstack-cloudlinux/profile.json'),
+               'almalinux-wordpress-v2':('/etc/duplika-betterstack/vector.yaml','/etc/duplika-betterstack/profile.json'),
+               'almalinux-wordpress-context-r6':('/etc/vector/vector.yaml','/etc/vector/duplika-profile.json')}
+        cfg,profile=paths[variant]
+        return {'baseline':{'files':{}},'spec':{'target':dict(TARGET,template_version='3'),
+            'base_variant':variant,'config':cfg,'profile':profile}}
+    def validate(self,variant,drift=False,healthy=True):
+        import types
+        old=self.old(variant)
+        fake=types.SimpleNamespace(expected_config=lambda spec:None,
+            observe=lambda spec:({'different':True} if drift else old['baseline'],{'service':healthy},'', ''))
+        spec=types.SimpleNamespace(loader=types.SimpleNamespace(exec_module=lambda module:None))
+        with tempfile.TemporaryDirectory(dir='/root') as d:
+            root=Path(d);(root/'complete').write_text('yes')
+            with patch.object(installer,'LEGACY',root),patch.object(installer,'load',return_value=old),patch.object(installer.shutil,'copyfile'),patch.object(identity,'read',return_value=b'reviewed'),patch.object(installer.importlib.util,'spec_from_file_location',return_value=spec),patch.object(installer.importlib.util,'module_from_spec',return_value=fake):
+                return installer.validate_migration(TARGET)
+    def test_all_three_reviewed_variants(self):
+        for variant in ('cloudlinux-v2','almalinux-wordpress-v2','almalinux-wordpress-context-r6'):
+            self.assertEqual(self.validate(variant)['spec']['base_variant'],variant)
+    def test_drift_blocks_adoption(self):
+        with self.assertRaisesRegex(RuntimeError,'drift_or_unhealthy'):self.validate('cloudlinux-v2',drift=True)
+    def test_unhealthy_service_blocks_adoption(self):
+        with self.assertRaisesRegex(RuntimeError,'drift_or_unhealthy'):self.validate('almalinux-wordpress-v2',healthy=False)
+
+class ResumeTests(unittest.TestCase):
+    def test_resume_rejects_changed_base_without_activation(self):
+        pending = {'phase': 'base_complete', 'target': TARGET, 'paths': [], 'baseline': {'old': 'hash'}}
+        with patch.object(installer, 'load', return_value=pending), patch.object(identity, 'snapshot', return_value={}), patch.object(installer, 'activate') as activate:
+            with self.assertRaisesRegex(RuntimeError, 'base_changed'):
+                installer.finish_install(TARGET, {})
+            activate.assert_not_called()
+
+    def test_resume_rejects_incomplete_base(self):
+        with patch.object(installer, 'load', return_value={'phase': 'base_installing', 'target': TARGET}):
+            with self.assertRaisesRegex(RuntimeError, 'base_not_complete'):
+                installer.finish_install(TARGET, {})
+
+if __name__ == '__main__':
+    unittest.main()

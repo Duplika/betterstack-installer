@@ -1,0 +1,6 @@
+{
+  "host": "cloud.example.net",
+  "server_ip": "203.0.113.20",
+  "source_id": 1234568,
+  "ingesting_host": "s1234568.us-west-2a.betterstackdata.com"
+}
