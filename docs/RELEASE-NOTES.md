@@ -1,3 +1,13 @@
+# 4.0.0-rc12 — candidata: espera LVE y recuperación parcial revisada
+
+Eleva la espera LVE de15a40s y TimeoutStartSec del recolector de50a55s. Mantiene CPUQuota10%, MemoryMax256M, frecuencia60s, detalle de dominios, LVE y Governor. No interpreta timeout como consumo cero ni aumenta recursos para resolverlo. Configuración de Vector intacta.
+
+Añade --recover-partial explícito para preflight/resume de una alta rc11 interrumpida por timeout LVE conocido. Valida hash oficial, configuración y fuente, capacidades, permisos, unidades efectivas sin drop-ins, servicios detenidos, marcadores y evidencia local. No adopta layouts desconocidos ni recolectores modificados. No reescribe credencial/configuración Vector, spool, buffers o cursores ni reinstala paquetes/usuarios. Backup antes de cambios; restaura archivos/servicios si falla validación nativa, ciclo o activación de identidad.
+
+Pruebas de espera acotada, validación sin mutaciones, rechazo de drift/configuración alterada/permisos/destino/drop-ins/estado activo y bases completas, recuperación satisfactoria preservando transporte/cursores, y reversión tras fallo de colector o identidad. La recuperación nativa y la aceptación remota siguen pendientes; no es promoción estable ni despliegue masivo.
+
+## Historial
+
 # 4.0.0-rc11 — candidata: CloudLinux 8 y cobertura en servidores compartidos
 
 Admite altas nuevas CloudLinux 8 con Python 3.9–3.12 ya instalado, detección de edición y prueba LVE real. AlmaLinux 8 conserva el alcance de migraciones revisadas. Instala curl si falta, disponible en EL8; no solicita curl-minimal. Conserva el Python del sistema, SELinux, privilegios, límites de CPU/memoria y las pruebas nativas en destino.

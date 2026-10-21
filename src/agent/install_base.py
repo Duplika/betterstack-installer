@@ -213,7 +213,7 @@ Description=Duplika CloudLinux - read-only account and process observer
 [Service]
 Type=oneshot
 ExecStart=__PYTHON__ -E -s -B /etc/duplika-betterstack-cloudlinux/collector.py
-TimeoutStartSec=50
+TimeoutStartSec=55
 UMask=0027
 Nice=15
 CPUAccounting=true

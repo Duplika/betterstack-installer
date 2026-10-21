@@ -70,3 +70,12 @@ Los resúmenes de dominios aislados siguen la política de cuentas/LVE: primera 
 duplika_collector_cpu_seconds y duplika_collector_peak_rss_bytes conservan su significado: sólo el proceso Python. duplika_collector_cpu_with_children_seconds incluye CPU de hijos finalizados; duplika_collector_children_peak_rss_bytes es el máximo individual de hijos, no suma simultánea. Ambos excluyen Vector y la identidad. CPUAccounting/MemoryAccounting en las unidades nuevas permite revisar el conjunto por cgroup con systemctl; no se afirma que estas métricas representen todo el agente. duplika_cpanel_accounts y duplika_cpanel_domains publican los recuentos del mapa de dominios.
 
 Estos cambios del recolector/unidades se aplican a altas nuevas y a las migraciones v3 que ya reemplazaban el recolector. Los upgrades v4 revisados conservan su recolector y transporte anteriores; no extienden estas mejoras automáticamente a instalaciones existentes. No hay actualización masiva.
+
+
+## Timeout LVE y base parcial rc11
+
+rc12 permite hasta40s para cloudlinux-top, conserva CPUQuota10%/MemoryMax256M y TimeoutStartSec55s para el recolector nuevo. El timeout anterior15s puede resultar insuficiente bajo la cuota; no inferir que --domains es la causa sin comparar. No altera límites LVE, Governor, aplicaciones ni el intervalo60s. Si la sonda sigue fallando no se declara salud completa.
+
+Recuperación explícita de la base rc11 incompleta: `preflight --recover-partial --target PERFIL.json` sólo valida; `resume --recover-partial --target PERFIL.json` repite validación, respalda archivos/estados, valida Vector como lector, cambia únicamente recolector/perfil/unidad observadora y ejecuta un ciclo nativo antes de habilitar transporte/timer e identidad. No reinstala Vector, crea usuarios, pide token ni elimina checkpoints. Conserva instalación y source_id. Ante fallo restaura archivos/estados del respaldo, conservando datos de diagnóstico y cursores que haya actualizado el ciclo real.
+
+Exige fase base_installing y destino exactos, fallo original conocido, hash oficial del recolector rc11, perfil/capacidades/destino válidos, configuración Vector regenerada idéntica, permisos/propiedad, unidades oficiales sin drop-ins y detenidas, timer/transporte disabled y observador static. Usa el Python elegido sólo si la unidad original coincide. Rechaza marcadores completos o errores distintos. Verificar recepción remota y dos ciclos posteriormente; no ejecutar credential de nuevo ni borrar archivos para sortear un rechazo.

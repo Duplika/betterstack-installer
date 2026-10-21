@@ -335,7 +335,7 @@ def collect_lve(out, profile):
     args = [command_path, '--json', '--order-by=cpu', '--max=10000']
     if profile.get('isolates_supported'):
         args.append('--domains')
-    data = json.loads(command(args, timeout=15))
+    data = json.loads(command(args, timeout=40))
     if data.get('result') != 'success' or not isinstance(data.get('users'), list):
         raise RuntimeError('cloudlinux_top_invalid_response')
     for record in data['users']:

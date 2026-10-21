@@ -1,0 +1,9 @@
+{
+  "version": "4.0.0-rc11",
+  "collector_sha256": "1952fc3e909cc1d48e3ef5937e18842a4c804fd7062ad85ef0f04106a30b76ba",
+  "units": {
+    "duplika-cloudlinux-observer.timer": "[Unit]\nDescription=Duplika CloudLinux - sample every minute\n\n[Timer]\nOnBootSec=30s\nOnUnitActiveSec=60s\nAccuracySec=2s\nUnit=duplika-cloudlinux-observer.service\n\n[Install]\nWantedBy=timers.target\n",
+    "duplika-cloudlinux-observer.service": "[Unit]\nDescription=Duplika CloudLinux - read-only account and process observer\n\n[Service]\nType=oneshot\nExecStart=__PYTHON__ -E -s -B /etc/duplika-betterstack-cloudlinux/collector.py\nTimeoutStartSec=50\nUMask=0027\nNice=15\nCPUAccounting=true\nMemoryAccounting=true\nIOSchedulingClass=idle\nCPUQuota=10%\nMemoryMax=256M\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/var/lib/duplika-betterstack-cloudlinux/private /var/lib/duplika-betterstack-cloudlinux/spool\n",
+    "duplika-betterstack-cloudlinux.service": "[Unit]\nDescription=Duplika Better Stack - CloudLinux transport\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=300\nStartLimitBurst=5\n\n[Service]\nUser=duplikaobs\nGroup=duplikaobs\nExecStart=__VECTOR__ --config-json /etc/duplika-betterstack-cloudlinux/vector.json\nRestart=on-failure\nRestartSec=10\nTimeoutStopSec=30\nUMask=0027\nNice=10\nCPUAccounting=true\nMemoryAccounting=true\nCPUQuota=20%\nMemoryMax=384M\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/var/lib/duplika-betterstack-cloudlinux/vector\n\n[Install]\nWantedBy=multi-user.target\n"
+  }
+}

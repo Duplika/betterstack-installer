@@ -587,9 +587,15 @@ def main():
     p.add_argument('--source-id', type=int)
     p.add_argument('--ingesting-host')
     p.add_argument('--credential', type=Path)
+    p.add_argument('--recover-partial', action='store_true',
+                   help='Recuperar sólo la base rc11 detenida por timeout LVE revisado')
     p.add_argument('--simplify-context', action='store_true',
                    help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
     args = p.parse_args()
+    if args.recover_partial and args.operation not in ('preflight', 'resume'):
+        p.error('--recover-partial sólo admite preflight/resume')
+    if args.recover_partial and args.simplify_context:
+        p.error('--recover-partial no se combina con --simplify-context')
     if args.simplify_context and args.operation not in ('preflight', 'upgrade'):
         p.error('--simplify-context sólo admite preflight/upgrade')
     if os.geteuid() != 0:
@@ -612,6 +618,16 @@ def main():
         p.error('--target es obligatorio')
     target = load(args.target)
     caps = secure_target(target)
+    if args.recover_partial:
+        import partial_recovery
+        if args.operation == 'preflight':
+            partial_recovery.validate(sys.modules[__name__], target, caps)
+            print(json.dumps({'host': target['host'], 'source_id': target['source_id'],
+                'installer_version': VERSION, 'recovery_from': '4.0.0-rc11',
+                'changes_applied': False, 'lve_timeout_seconds': 40, 'cpu_quota': '10%'}, indent=2))
+        else:
+            partial_recovery.recover(sys.modules[__name__], target, caps)
+        return
     if args.operation == 'credential':
         create_credential(target, args.credential or Path('/root/fuente.json'))
         return
