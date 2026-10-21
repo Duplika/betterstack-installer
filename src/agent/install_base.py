@@ -146,7 +146,7 @@ def main():
         # Official signed RPM repository, without a system-wide upgrade.
         run(['dnf', '-y', 'install', 'ca-certificates'])
         if not shutil.which('curl'):
-            run(['dnf', '-y', 'install', 'curl-minimal'])
+            run(['dnf', '-y', 'install', 'curl'])
         repo = HERE / 'vector-repo.sh'
         run(['curl', '--proto', '=https', '--tlsv1.2', '-fsSL', '--connect-timeout', '15',
              '--max-time', '120', 'https://setup.vector.dev', '-o', str(repo)])
@@ -194,6 +194,8 @@ RestartSec=10
 TimeoutStopSec=30
 UMask=0027
 Nice=10
+CPUAccounting=true
+MemoryAccounting=true
 CPUQuota=20%
 MemoryMax=384M
 NoNewPrivileges=true
@@ -214,6 +216,8 @@ ExecStart=__PYTHON__ -E -s -B /etc/duplika-betterstack-cloudlinux/collector.py
 TimeoutStartSec=50
 UMask=0027
 Nice=15
+CPUAccounting=true
+MemoryAccounting=true
 IOSchedulingClass=idle
 CPUQuota=10%
 MemoryMax=256M

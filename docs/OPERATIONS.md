@@ -29,7 +29,7 @@ La identidad completa se envía inicialmente, ante cambios de estado/integridad/
 
 ## Límites
 
-EL9 con cPanel para altas nuevas; también migraciones v3 revisadas de AlmaLinux 8 usando Python 3.9–3.12 ya instalado. EL8 requiere aceptación nativa de systemd/needs-restarting en destino. Los nombres históricos de unidades/directorios CloudLinux se conservan en instalaciones nuevas también sobre AlmaLinux para mantener un transporte probado; `os_id` informa el sistema real.
+AlmaLinux 9 y CloudLinux 8/9 con cPanel para altas nuevas; también migraciones v3 revisadas de AlmaLinux 8 usando Python 3.9–3.12 ya instalado. EL8 requiere aceptación nativa de systemd/needs-restarting en destino. Los nombres históricos de unidades/directorios CloudLinux se conservan en instalaciones nuevas también sobre AlmaLinux para mantener un transporte probado; `os_id` informa el sistema real.
 
 Domlogs: presupuesto 8 MiB por ciclo y 2 MiB por archivo. Se informa pérdida de cobertura por topes/rotaciones/formato. Los buffers y spool son acotados. Procesos breves pueden escapar al muestreo de un minuto; consumo por usuario no equivale siempre a atribución exacta por dominio.
 
@@ -59,3 +59,14 @@ rc9 intenta todos los reinicios previamente activos aunque falle otro y sólo de
 ## Ubicación efectiva de unidades
 
 rc10 obtiene FragmentPath/DropInPaths mediante systemctl show para cada servicio/timer conservado. Verifica todos los archivos durante preflight y antes de mutar el legado. La identidad registra las rutas reales, incluidas unidades de proveedor y drop-ins locales. No crear /etc/systemd/system/vector.service como atajo: debe conservarse la unidad del paquete.
+
+
+## Escala en instalaciones nuevas rc11
+
+El presupuesto de accesos sigue en 8 MiB por ciclo y 2 MiB por archivo. Se descubre una vez la lista de archivos canónicos, se deduplican inodes y se reparte el presupuesto entre los que tienen datos nuevos; el orden inicial rota en cada ciclo. No garantiza leer todas las solicitudes si se supera el presupuesto. duplika_access_coverage_complete=0 y duplika_access_skipped_bytes informan la cobertura parcial. Usar las tasas por sitio como observación parcial en esos intervalos, no como totales exactos de facturación. El primer ciclo establece EOF sin subir historia.
+
+Los resúmenes de dominios aislados siguen la política de cuentas/LVE: primera observación, cambios de metadatos/presión, cada cinco minutos, y cada ciclo bajo presión. Se conservan las métricas por minuto. No se activan lectores WordPress por defecto.
+
+duplika_collector_cpu_seconds y duplika_collector_peak_rss_bytes conservan su significado: sólo el proceso Python. duplika_collector_cpu_with_children_seconds incluye CPU de hijos finalizados; duplika_collector_children_peak_rss_bytes es el máximo individual de hijos, no suma simultánea. Ambos excluyen Vector y la identidad. CPUAccounting/MemoryAccounting en las unidades nuevas permite revisar el conjunto por cgroup con systemctl; no se afirma que estas métricas representen todo el agente. duplika_cpanel_accounts y duplika_cpanel_domains publican los recuentos del mapa de dominios.
+
+Estos cambios del recolector/unidades se aplican a altas nuevas y a las migraciones v3 que ya reemplazaban el recolector. Los upgrades v4 revisados conservan su recolector y transporte anteriores; no extienden estas mejoras automáticamente a instalaciones existentes. No hay actualización masiva.

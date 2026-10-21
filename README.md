@@ -1,8 +1,8 @@
 # Better Stack installer
 
-Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
+Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 8 y 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc10 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc11 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 **No usar rc8:** se conserva como artefacto histórico; su escritura de permisos y reversión tienen fallos corregidos en rc9.
 
@@ -20,12 +20,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc10/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc11/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc10/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc11/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -91,7 +91,7 @@ Antes de publicar la primera release, activar **Settings → General → Release
 
 ## AlmaLinux 8 y reducción explícita de contexto
 
-El bootstrap elige un Python 3.9–3.12 ya instalado en /usr/bin (prefiere python3 si es compatible). El servicio de identidad usa el intérprete elegido; no cambia enlaces, alternatives ni paquetes del Python del sistema. AlmaLinux 8 se admite para migraciones v3 revisadas, no para instalaciones nuevas en esta candidata. CloudLinux 8 sigue fuera del alcance.
+El bootstrap elige un Python 3.9–3.12 ya instalado en /usr/bin (prefiere python3 si es compatible). El servicio de identidad usa el intérprete elegido; no cambia enlaces, alternatives ni paquetes del Python del sistema. AlmaLinux 8 se admite para migraciones v3 revisadas, no para instalaciones nuevas en esta candidata. CloudLinux 8 admite altas nuevas con capacidades LVE verificadas y requiere aceptación nativa en destino.
 
 Para una base existente reconocida almalinux-wordpress-context-r6 se puede seleccionar:
 

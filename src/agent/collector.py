@@ -38,9 +38,11 @@ class LogPolicy:
                 del self.entries[key]
 
     def decision(self, kind, fields):
-        if kind not in ('account_resources', 'lve_usage'):
+        if kind not in ('account_resources', 'lve_usage', 'isolated_domain_usage'):
             return 'unfiltered'
         key = kind + ':' + str(fields.get('user', ''))
+        if kind == 'isolated_domain_usage':
+            key += ':' + str(fields.get('site', ''))
         if kind == 'account_resources':
             # running_processes and observation flags are not duplicated in account metrics.
             signature = {k: fields.get(k) for k in ('cpanel_account', 'measurement',
@@ -436,6 +438,8 @@ def collect_access(out, state, domains, profile):
     for site in list(pending):
         if site not in domains:
             del pending[site]
+    candidates = []
+    # Discover once, then share the existing budget across files with new data.
     # Scan only canonical top-level cPanel domlogs, never /home/virtfs or user symlinks.
     for root in profile['domlog_roots']:
         for path in sorted(Path(root).iterdir()):
@@ -448,33 +452,50 @@ def collect_access(out, state, domains, profile):
                 if key in seen:
                     continue
                 seen.add(key)
-                lines, position, quality = read_tail(path, old.get(str(path)), budget)
-                new[str(path)] = position
-                budget -= quality['bytes_read']
-                coverage.update(quality)
-                coverage['files'] += 1
-                for line in lines:
-                    if len(line) > 16384:
-                        coverage['oversized_lines'] += 1
-                        continue
-                    match = ACCESS.match(line.decode('utf-8', errors='replace'))
-                    if not match:
-                        coverage['unparsed_lines'] += 1
-                        continue
-                    values = match.groupdict()
-                    group = sites[site]
-                    group['requests'] += 1
-                    group['response_bytes'] += int(values['bytes']) if values['bytes'].isdigit() else 0
-                    group['errors_5xx'] += values['status'].startswith('5')
-                    group['errors_4xx'] += values['status'].startswith('4')
-                    group['post_requests'] += values['method'] == 'POST'
-                    route = route_group(values['url'])
-                    group['dynamic_requests'] += route != 'static'
-                    groups[site]['route:' + route] += 1
-                    groups[site]['agent:' + agent_group(values.get('ua') or '')] += 1
-                    groups[site]['status:' + values['status']] += 1
+                previous = old.get(str(path))
+                backlog = previous is not None and (
+                    previous.get('inode') != list(key) or previous['offset'] != info.st_size)
+                candidates.append((path, site, backlog))
             except (OSError, ValueError, RuntimeError):
                 coverage['unreadable_files'] += 1
+    # Rotation makes rounding and unused budget favor a different file each cycle.
+    if candidates:
+        start = state.get('access_round_robin', 0) % len(candidates)
+        candidates = candidates[start:] + candidates[:start]
+        state['access_round_robin'] = (start + 1) % len(candidates)
+    remaining = sum(backlog for _, _, backlog in candidates)
+    for path, site, backlog in candidates:
+        try:
+            allowance = min(MAX_FILE_BYTES, budget // remaining) if backlog and remaining else 0
+            if backlog:
+                remaining -= 1
+            lines, position, quality = read_tail(path, old.get(str(path)), allowance)
+            new[str(path)] = position
+            budget -= quality['bytes_read']
+            coverage.update(quality)
+            coverage['files'] += 1
+            for line in lines:
+                if len(line) > 16384:
+                    coverage['oversized_lines'] += 1
+                    continue
+                match = ACCESS.match(line.decode('utf-8', errors='replace'))
+                if not match:
+                    coverage['unparsed_lines'] += 1
+                    continue
+                values = match.groupdict()
+                group = sites[site]
+                group['requests'] += 1
+                group['response_bytes'] += int(values['bytes']) if values['bytes'].isdigit() else 0
+                group['errors_5xx'] += values['status'].startswith('5')
+                group['errors_4xx'] += values['status'].startswith('4')
+                group['post_requests'] += values['method'] == 'POST'
+                route = route_group(values['url'])
+                group['dynamic_requests'] += route != 'static'
+                groups[site]['route:' + route] += 1
+                groups[site]['agent:' + agent_group(values.get('ua') or '')] += 1
+                groups[site]['status:' + values['status']] += 1
+        except (OSError, ValueError, RuntimeError):
+            coverage['unreadable_files'] += 1
     complete = not any(coverage[k] for k in ('skipped_bytes', 'rotated', 'initialized', 'unparsed_lines', 'unreadable_files', 'oversized_lines'))
     elapsed = max(1, time.time() - state.get('access_at', time.time()))
     for pending_site in state.get('traffic_pending_v4', {}):
@@ -489,6 +510,7 @@ def collect_access(out, state, domains, profile):
     out.log('access_log_coverage', coverage_complete=complete, **dict(coverage))
     out.metric('duplika_access_skipped_bytes', coverage['skipped_bytes'])
     out.metric('duplika_access_parse_failures', coverage['unparsed_lines'])
+    out.metric('duplika_access_coverage_complete', int(complete))
     state['access_files'], state['access_at'] = new, time.time()
     return dict(coverage)
 
@@ -615,8 +637,15 @@ def main():
     duration = time.monotonic() - started
     import resource
     usage = resource.getrusage(resource.RUSAGE_SELF)
+    children = resource.getrusage(resource.RUSAGE_CHILDREN)
     out.metric('duplika_collector_cpu_seconds', usage.ru_utime + usage.ru_stime)
     out.metric('duplika_collector_peak_rss_bytes', usage.ru_maxrss * 1024)
+    out.metric('duplika_collector_cpu_with_children_seconds',
+               usage.ru_utime + usage.ru_stime + children.ru_utime + children.ru_stime)
+    # Largest child RSS, not simultaneous total memory. Cgroup accounting measures the unit.
+    out.metric('duplika_collector_children_peak_rss_bytes', children.ru_maxrss * 1024)
+    out.metric('duplika_cpanel_accounts', len(accounts))
+    out.metric('duplika_cpanel_domains', len(domains))
     out.log('collector_heartbeat', duration_seconds=round(duration, 3), accounts=len(accounts),
             domains=len(domains), components=components, installation_id=profile['installation_id'],
             suppressed_summary_logs=dict(out.suppressed))

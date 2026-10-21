@@ -60,14 +60,14 @@ class CleanupTests(unittest.TestCase):
         self.assertFalse(paths[0].exists())
         self.assertFalse(paths[0].parent.exists())
 
-    def test_almalinux8_detected_cloudlinux8_stays_unsupported(self):
+    def test_almalinux8_detected_cloudlinux8_requires_capabilities(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'os-release'
             path.write_text('ID=almalinux\nVERSION_ID="8.10"\n')
             self.assertEqual(capabilities.detect(path)['os_version'], '8.10')
             path.write_text('ID=cloudlinux\nVERSION_ID="8.10"\n')
-            with self.assertRaisesRegex(RuntimeError, 'unsupported_os'):
-                capabilities.detect(path)
+            with self.assertRaisesRegex(RuntimeError, 'edition_detector_missing'):
+                capabilities.detect(path, finder=lambda name: None)
 
     def test_new_almalinux8_install_refused_before_writes(self):
         with patch.object(installer, 'write') as write:

@@ -1,3 +1,15 @@
+# 4.0.0-rc11 — candidata: CloudLinux 8 y cobertura en servidores compartidos
+
+Admite altas nuevas CloudLinux 8 con Python 3.9–3.12 ya instalado, detección de edición y prueba LVE real. AlmaLinux 8 conserva el alcance de migraciones revisadas. Instala curl si falta, disponible en EL8; no solicita curl-minimal. Conserva el Python del sistema, SELinux, privilegios, límites de CPU/memoria y las pruebas nativas en destino.
+
+Corrige sesgo alfabético al agotar el presupuesto de accesos: reparte 8 MiB entre archivos con datos nuevos y rota el orden; sigue limitado a 2 MiB por archivo. No sube logs crudos ni datos históricos. Expone cobertura completa/parcial sin presentar pérdidas como ausencia de tráfico. Reduce resúmenes repetidos de dominios aislados a cinco minutos, conserva métricas por minuto y presión inmediata.
+
+Agrega CPU del recolector con hijos finalizados, máximo RSS individual de hijos y recuentos de cuentas/dominios. Conserva métricas antiguas sin cambiar su significado. Activa contabilidad cgroup de CPU/memoria para unidades nuevas. Vector y configuración de transporte no cambian. Pruebas sintéticas de 500 cuentas/1.000 dominios bajo exceso de presupuesto en dos ciclos; también rotación, deduplicación e inactividad. Esto no prueba consumo o compatibilidad nativa del servidor real.
+
+No cambia automáticamente recolectores de instalaciones v4 anteriores: sus upgrades preservadores siguen con el alcance documentado. Pendiente preflight, instalación nativa y aceptación remota del piloto CloudLinux 8; no es release estable.
+
+## Historial
+
 # 4.0.0-rc10 — candidata: unidades del paquete y drop-ins efectivos
 
 Corrige la migración v3: no presupone que todas las unidades están en /etc/systemd/system. Consulta FragmentPath y DropInPaths a systemd, verifica archivos efectivos y los incorpora a la identidad. Conserva unidades vendor, locales y drop-ins; no copia ni reemplaza unidades del paquete.

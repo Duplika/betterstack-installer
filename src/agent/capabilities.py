@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 
-VERSION = '4.0.0-rc10'
+VERSION = '4.0.0-rc11'
 SCHEMA = 1
 MAX_OUTPUT = 8 * 1024 * 1024
 
@@ -83,7 +83,7 @@ def detect(osrelease=Path('/etc/os-release'), runner=run, finder=trusted_executa
     info = dict(line.split('=', 1) for line in osrelease.read_text().splitlines() if '=' in line)
     distro = info.get('ID', '').strip('"\'').lower()
     version = info.get('VERSION_ID', '').strip('"\'')
-    allowed = {'almalinux': ('8', '9'), 'cloudlinux': ('9',)}
+    allowed = {'almalinux': ('8', '9'), 'cloudlinux': ('8', '9')}
     if version.split('.')[0] not in allowed.get(distro, ()):
         raise ProbeError('unsupported_os:' + distro + ':' + version)
     result = {'os_id': distro, 'os_version': version, 'edition': None,
