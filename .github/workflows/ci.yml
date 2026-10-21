@@ -36,8 +36,24 @@ jobs:
       - name: Offline root-fixture tests and public export guard
         run: sudo env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$GITHUB_WORKSPACE/src/agent" "$pythonLocation/bin/python" scripts/check.py
 
+  native-vector:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify pinned upstream Vector and run synthetic native tests
+        run: |
+          set -euo pipefail
+          curl --proto '=https' --tlsv1.2 -fsSL --max-time 180 'https://packages.timber.io/vector/0.60.0/vector-0.60.0-x86_64-unknown-linux-gnu.tar.gz' -o /tmp/vector.tar.gz
+          printf '%s  %s\n' '89a9f134dcc35a6fbba9cb8ad0fec2d4802657bba6cb1c374a30660ef9456bdc' /tmp/vector.tar.gz | sha256sum --check
+          mkdir /tmp/vector-native
+          tar -xzf /tmp/vector.tar.gz -C /tmp/vector-native
+          PYTHONPATH=src/agent python3 scripts/check_vector.py --vector /tmp/vector-native/vector-x86_64-unknown-linux-gnu/bin/vector
+
   build:
-    needs: test
+    needs: [test, native-vector]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10

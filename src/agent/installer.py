@@ -17,6 +17,7 @@ import tempfile
 
 from capabilities import VERSION, SCHEMA, detect, parse_json, run, trusted_executable, validate_target
 import identity
+import context_cleanup
 
 HERE = Path(__file__).resolve().parent
 BASE = identity.BASE
@@ -43,6 +44,9 @@ def write(path, data, mode=0o600):
     fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     try:
         with os.fdopen(fd, 'wb') as f:
+            if path.exists():
+                previous = path.stat()
+                os.fchown(f.fileno(), previous.st_uid, previous.st_gid)
             f.write(data if isinstance(data, bytes) else data.encode()); f.flush(); os.fsync(f.fileno())
         os.replace(temp, path)
     finally:
@@ -174,7 +178,8 @@ def backup(paths, services):
             data = identity.read(p)
             dest = directory / str(i)
             write(dest, data, p.stat().st_mode & 0o777)
-            files[path] = {'file': str(dest), 'mode': p.stat().st_mode & 0o777}
+            files[path] = {'file': str(dest), 'mode': p.stat().st_mode & 0o777,
+                           'uid': p.stat().st_uid, 'gid': p.stat().st_gid}
         else:
             files[path] = None
     statuses = {}
@@ -194,6 +199,7 @@ def restore(record):
     for path, item in record['files'].items():
         if item:
             write(path, identity.read(item['file']), item['mode'])
+            os.chown(path, item.get('uid', 0), item.get('gid', 0))
         else:
             Path(path).unlink(missing_ok=True)
     execute(['systemctl', 'daemon-reload'])
@@ -208,6 +214,9 @@ def runtime_files():
 
 
 def activate(target, caps, config, profile_path, services, oneshots, original_paths, vector, pipeline_variant="observer-v4", migration_review=None):
+    python = trusted_executable(sys.executable)
+    if not python or not re.fullmatch(r'/[A-Za-z0-9_./-]+', python):
+        raise RuntimeError('unsafe_python_interpreter')
     for name in ('identity.py', 'health.py', 'capabilities.py'):
         write(BASE / name, (HERE / name).read_bytes())
     service = '''[Unit]
@@ -215,7 +224,7 @@ Description=Duplika v4 hourly identity and maintenance observations
 After=network-online.target
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /etc/duplika-betterstack-v4/identity.py --publish
+ExecStart=__PYTHON__ -E -s -B /etc/duplika-betterstack-v4/identity.py --publish
 UMask=0077
 Nice=15
 IOSchedulingClass=idle
@@ -227,7 +236,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/duplika-betterstack-v4
-'''
+'''.replace('__PYTHON__', python)
     timer = '''[Unit]
 Description=Duplika v4 hourly maintenance and version identity
 [Timer]
@@ -259,10 +268,12 @@ WantedBy=timers.target
     execute(['systemctl', 'enable', '--now', NAME + '.timer'])
     identity.status()  # Local verification; remote delivery has a separate acceptance.
     write(BASE / 'complete', VERSION + '\n')
-    print('v4 instalada localmente. Recepción remota pendiente; el timer publica identidad cada hora.')
+    print('v4 instalada localmente. Recepción remota pendiente; comprobación horaria y publicación ante cambios o diaria.')
 
 
 def fresh(target, caps, credential):
+    if caps['os_id'] == 'almalinux' and caps['os_version'].split('.')[0] == '8':
+        raise RuntimeError('install:almalinux8_reviewed_migration_only')
     if (BASE / 'manifest.json').exists() or (STATE / 'install-pending.json').exists():
         raise RuntimeError('install:existing_state_use_status_or_resume')
     creds = load(credential)
@@ -317,11 +328,12 @@ def observer_base_paths():
 
 
 def validate_v4_upgrade(target, caps):
-    """Only reviewed, complete rc3/rc4/rc5/rc6 observer layouts can migrate."""
+    """Only reviewed, complete candidate observer layouts can migrate."""
     old = load(BASE / 'manifest.json')
     previous = old.get('agent_version')
     reviewed_versions = {'4.0.0-rc3': 'upgrade_rc3.json', '4.0.0-rc4': 'upgrade_rc4.json',
-                         '4.0.0-rc5': 'upgrade_rc5.json', '4.0.0-rc6': 'upgrade_rc6.json'}
+                         '4.0.0-rc5': 'upgrade_rc5.json', '4.0.0-rc6': 'upgrade_rc6.json',
+                         '4.0.0-rc7': 'upgrade_rc7.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -365,19 +377,25 @@ def upgrade_v4(target, caps):
         raise
 
 
-def upgrade(target, caps):
+def upgrade(target, caps, simplify_context=False):
     if (BASE / 'complete').exists():
         existing = load(BASE / 'manifest.json')
         if existing['agent_version'] == VERSION and existing['target'] == target:
+            if simplify_context and existing['pipeline_variant'] != 'almalinux-wordpress-minimal-v4':
+                raise RuntimeError('cleanup:requires_reviewed_context_v3')
             identity.status()
             print('Versión ya instalada; sin cambios.')
             return
+        if simplify_context:
+            raise RuntimeError('cleanup:requires_reviewed_context_v3')
         upgrade_v4(target, caps)
         return
     old = validate_migration(target)
     if target.get('wordpress'):
         raise RuntimeError('upgrade:wordpress_selection_change_requires_separate_review')
     spec = old['spec']
+    if simplify_context and spec['base_variant'] != 'almalinux-wordpress-context-r6':
+        raise RuntimeError('cleanup:requires_reviewed_context_v3')
     config, profile_path = Path(spec['config']), Path(spec['profile'])
     profile = load(profile_path)
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
@@ -385,6 +403,15 @@ def upgrade(target, caps):
     services = ['duplika-betterstack-identity.timer', 'duplika-betterstack-identity.service',
                 NAME + '.timer', NAME + '.service']
     cloud = spec['base_variant'] == 'cloudlinux-v2'
+    cleanup_paths = context_cleanup.paths(UNITS) if simplify_context else []
+    vector = trusted_executable('vector')
+    if not vector:
+        raise RuntimeError('upgrade:vector_binary_missing')
+    candidate = context_cleanup.prepare(load(config)) if simplify_context else None
+    if simplify_context:
+        context_cleanup.validate(candidate, vector, execute)
+        paths += [config, *cleanup_paths]
+        services += ['duplika-vector-context.timer', 'duplika-vector-context.service', spec['vector_service']]
     if cloud:
         if target.get('wordpress'):
             raise RuntimeError('upgrade:wordpress_requires_separate_reviewed_sandbox_change')
@@ -394,6 +421,15 @@ def upgrade(target, caps):
     try:
         execute(['systemctl', 'disable', '--now', 'duplika-betterstack-identity.timer'])
         execute(['systemctl', 'stop', 'duplika-betterstack-identity.service'])
+        if simplify_context:
+            execute(['systemctl', 'disable', '--now', 'duplika-vector-context.timer'])
+            execute(['systemctl', 'stop', 'duplika-vector-context.service'])
+            execute(['systemctl', 'stop', spec['vector_service']])
+            write(config, identity.canonical(candidate), config.stat().st_mode & 0o777)
+            for path in cleanup_paths:
+                path.unlink()
+            execute(['systemctl', 'daemon-reload'])
+            execute(['systemctl', 'start', spec['vector_service']])
         if cloud:
             execute(['systemctl', 'stop', 'duplika-cloudlinux-observer.timer', 'duplika-cloudlinux-observer.service'])
             profile.update(capabilities=caps, agent_version=VERSION, wordpress=[])
@@ -408,11 +444,17 @@ def upgrade(target, caps):
             original.append(UNITS / name)
             if name.endswith('.timer'):
                 original.append(UNITS / (name[:-6] + '.service'))
-        vector = trusted_executable('vector')
-        if not vector:
-            raise RuntimeError('upgrade:vector_binary_missing')
-        activate(target, caps, config, profile_path, spec['services'],
-                 [name[:-6] + '.service' for name in spec['services'] if name.endswith('.timer')], original, vector, 'observer-v4' if cloud else spec['base_variant'], old.get('migration_review'))
+        active_services = list(spec['services'])
+        variant = 'observer-v4' if cloud else spec['base_variant']
+        review = old.get('migration_review')
+        if simplify_context:
+            original = [path for path in original if path not in cleanup_paths]
+            active_services.remove('duplika-vector-context.timer')
+            variant = 'almalinux-wordpress-minimal-v4'
+            review = dict(review or {}, context_cleanup={'cpanel_reader': 'removed', 'routine_cron': 'removed',
+                          'relay_and_checkpoints': 'preserved'})
+        activate(target, caps, config, profile_path, active_services,
+                 [name[:-6] + '.service' for name in active_services if name.endswith('.timer')], original, vector, variant, review)
     except BaseException:
         restore(transaction)
         raise
@@ -461,7 +503,11 @@ def main():
     p.add_argument('--source-id', type=int)
     p.add_argument('--ingesting-host')
     p.add_argument('--credential', type=Path)
+    p.add_argument('--simplify-context', action='store_true',
+                   help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
     args = p.parse_args()
+    if args.simplify_context and args.operation not in ('preflight', 'upgrade'):
+        p.error('--simplify-context sólo admite preflight/upgrade')
     if os.geteuid() != 0:
         p.error('Ejecutar como root.')
     os.umask(0o077)
@@ -490,17 +536,28 @@ def main():
         if (BASE / 'complete').exists():
             if load(BASE / 'manifest.json')['target'] != target:
                 raise RuntimeError('preflight:target_mismatch')
+            if args.simplify_context and load(BASE / 'manifest.json')['pipeline_variant'] != 'almalinux-wordpress-minimal-v4':
+                raise RuntimeError('cleanup:requires_reviewed_context_v3')
             previous = load(BASE / 'manifest.json')['agent_version']
             if previous != VERSION:
                 validate_v4_upgrade(target, caps)
             identity.status()
         if LEGACY.exists() and not (BASE / 'complete').exists():
             previous = validate_migration(target)['spec']['base_variant']
+            if args.simplify_context:
+                if previous != 'almalinux-wordpress-context-r6':
+                    raise RuntimeError('cleanup:requires_reviewed_context_v3')
+                context_cleanup.validate(context_cleanup.prepare(load('/etc/vector/vector.yaml')),
+                                         trusted_executable('vector'), execute)
         elif not (BASE / 'complete').exists():
             for path in (CLOUD, CLOUD_DATA):
                 if path.exists() or path.is_symlink():
                     raise RuntimeError('preflight:partial_or_unknown_installation')
         if previous is None and not (BASE / 'complete').exists():
+            if args.simplify_context:
+                raise RuntimeError('cleanup:requires_reviewed_context_v3')
+            if caps['os_id'] == 'almalinux' and caps['os_version'].split('.')[0] == '8':
+                raise RuntimeError('install:almalinux8_reviewed_migration_only')
             with tempfile.TemporaryDirectory(prefix='duplika-preflight4-', dir='/root') as folder:
                 stage = Path(folder)
                 for name in ('install_base.py', 'config.py', 'collector.py', 'capabilities.py'):
@@ -513,6 +570,8 @@ def main():
         print(json.dumps({'host': target['host'], 'source_id': target['source_id'],
             'capabilities': caps, 'migration_from': previous, 'installer_version': VERSION,
             'changes_applied': False}, indent=2))
+        if args.simplify_context:
+            print('Plan revisado: retirar lector cPanel y cron rutinario; conservar errores, métricas, relay y checkpoints.')
         return
     mkdir(BASE); mkdir(STATE)
     if args.operation in ('install', 'resume') and (BASE / 'complete').exists():
@@ -528,7 +587,7 @@ def main():
             p.error('--credential es obligatorio para instalación nueva')
         fresh(target, caps, args.credential)
     else:
-        upgrade(target, caps)
+        upgrade(target, caps, args.simplify_context)
 
 
 if __name__ == '__main__':

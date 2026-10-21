@@ -5,7 +5,7 @@
 - Every code change needs a new candidate version; do not overwrite released artifacts.
 - Run `sudo env PYTHONPATH=src/agent python3 scripts/check.py` before publishing.
 - Preserve the reviewed legacy files byte-for-byte. They are references, not standalone installers.
-- The Vector configuration is unchanged from the legacy reference. Changes require native tests with a compatible Vector before release.
+- Preserve the legacy Vector configuration unless an explicitly selected reviewed migration changes it. The optional context-r6 reduction removes cPanel context and routine cron only. Changes require native tests with a compatible Vector before release.
 - Installing software or migrating servers is separate from publishing this repository.
 - No automatic updates, reboots, live patches or web/PHP/MySQL/security configuration changes.
 - Download only a pinned commit/release and verify the independently trusted digest or GitHub build attestation before running as root.

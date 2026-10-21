@@ -1,8 +1,8 @@
 # Better Stack installer
 
-Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 9 con cPanel**.
+Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc7 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc8 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 ## Qué detecta
 
@@ -16,12 +16,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc7/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc8/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc7/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc8/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -83,3 +83,18 @@ Build determinista mediante lista explícita de archivos. CI usa Python 3.9/3.12
 Antes de publicar la primera release, activar **Settings → General → Releases → Enable release immutability**. También configurar reglas de revisión/protección de `main` y tags de versión; estos ajustes administrativos no los aplica el código.
 
 [Seguridad y límites](SECURITY.md) · [Procedencia y descarga](docs/VERIFICATION.md) · [Operación](docs/OPERATIONS.md)
+
+
+## AlmaLinux 8 y reducción explícita de contexto
+
+El bootstrap elige un Python 3.9–3.12 ya instalado en /usr/bin (prefiere python3 si es compatible). El servicio de identidad usa el intérprete elegido; no cambia enlaces, alternatives ni paquetes del Python del sistema. AlmaLinux 8 se admite para migraciones v3 revisadas, no para instalaciones nuevas en esta candidata. CloudLinux 8 sigue fuera del alcance.
+
+Para una base existente reconocida almalinux-wordpress-context-r6 se puede seleccionar:
+
+```bash
+bash /root/installer.sh preflight --target /root/perfil.json --simplify-context
+bash /root/installer.sh upgrade --target /root/perfil.json --simplify-context
+bash /root/installer.sh verify
+```
+
+La opción retira el lector cPanel, su servicio/timer y su entrada en Vector; descarta cron rutinario del journal. Conserva métricas, errores de aplicaciones, eventos de servicios/kernel/crashes, fuente, credencial, ACL, data_dir y cursores. El relay histórico queda localmente. Se comprueba primero la referencia v3 completa, se prueba/valida la propuesta con el Vector instalado y se respalda antes de cambiar archivos. Esta opción reinicia sólo Vector para aplicar el pipeline; no reinicia el servidor. Sin la opción se conserva el contexto existente. rollback restaura archivos, propietarios/grupos y estado de las unidades de la última transacción.

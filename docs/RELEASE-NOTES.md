@@ -1,3 +1,15 @@
+# 4.0.0-rc8 — candidata: AlmaLinux 8 y contexto opcional
+
+Bootstrap con selección explícita de Python 3.9–3.12 instalado; identidad y altas nuevas usan ese mismo intérprete. No modifica Python del sistema ni instala otro. Detecta AlmaLinux 8 para migraciones v3 revisadas. Las altas EL8 y CloudLinux 8 siguen bloqueadas hasta su revisión propia.
+
+--simplify-context sólo para context-r6 v3: prueba y valida la configuración propuesta con el Vector instalado antes de aplicar; retira lector cPanel/servicio/timer y cron rutinario; conserva errores, métricas, destinos, ACL, data_dir, cursores y relay histórico. Respaldo/reversión conserva también propietario/grupo de la configuración. Un reinicio controlado de Vector aplica este cambio explícito. Otras diferencias no revisadas siguen bloqueando. El manifiesto informa pipeline_variant=almalinux-wordpress-minimal-v4 y la reducción aplicada. Sin opción, migración preservadora.
+
+Admite también upgrade revisado observer-v4 rc7, junto a rc3–rc6. Los layouts v4 AlmaLinux heredados siguen requiriendo revisión específica. No requiere actualizar otros hosts para resolver esta migración.
+
+Validación local: 84 pruebas Python; 30 casos nativos y validate --no-environment con Vector 0.60.0 oficial, archivo upstream SHA256 89a9f134dcc35a6fbba9cb8ad0fec2d4802657bba6cb1c374a30660ef9456bdc. Se agrega ese control nativo a CI. La fixture local usa namespace con sólo gid 0; CI ejecuta la restauración real con un grupo distinto. Falta preflight/ejecución de systemd 239 y sonda EL8, identidad y continuidad remotas. Continúa candidata.
+
+## Historial
+
 # 4.0.0-rc7 — candidata: migración tras actualizar Vector
 
 Permite migrar una instalación v3 revisada y saludable cuyo único cambio sea el binario de Vector por una actualización del paquete. Exige mismo archivo activo/instalado (dispositivo e inode), paquete propietario vector, algoritmo SHA256 y coincidencia del hash observado con FILEDIGESTS registrado en la base RPM local. Sigue rechazando otros cambios, binarios no coincidentes, paquetes desconocidos, hashes ausentes/duplicados y servicios no saludables.

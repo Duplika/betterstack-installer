@@ -43,6 +43,30 @@ class ConfigurationTests(unittest.TestCase):
             self.assertNotIn('TEST_SECRET',str(output.call_args_list))
 
 class PackagingTests(unittest.TestCase):
+    def test_bootstrap_skips_old_system_python_without_changing_it(self):
+        import importlib.util
+        import subprocess
+        import sys
+        root=Path(__file__).resolve().parents[1]
+        spec=importlib.util.spec_from_file_location('public_builder',root/'scripts/build.py')
+        builder=importlib.util.module_from_spec(spec);spec.loader.exec_module(builder)
+        with tempfile.TemporaryDirectory(dir='/root') as directory:
+            folder=Path(directory)
+            old=folder/'python3';old.write_text('#!/bin/sh\nexit 1\n');old.chmod(0o700)
+            selected=folder/'python3.12'
+            selected.write_text('#!/bin/sh\nexec '+sys.executable+' "$@"\n');selected.chmod(0o700)
+            builder.build(folder/'output')
+            script=folder/'output/installer.sh'
+            script.write_text(script.read_text().replace('/usr/bin/python3.12',str(selected))
+                              .replace('/usr/bin/python3.11',str(folder/'missing11'))
+                              .replace('/usr/bin/python3.9',str(folder/'missing9'))
+                              .replace('/usr/bin/python3 ',str(old)+' '))
+            before=old.read_bytes()
+            result=subprocess.run(['bash',str(script),'--help'],capture_output=True,text=True,timeout=30)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('--simplify-context',result.stdout)
+            self.assertEqual(old.read_bytes(),before)
+
     def test_gzip_header_is_normalized_across_python_variants(self):
         import base64
         import importlib.util
@@ -187,6 +211,9 @@ class Rc5UpgradeTests(CandidateUpgradeTests):
 
 class Rc6UpgradeTests(CandidateUpgradeTests):
     previous_version='4.0.0-rc6'
+
+class Rc7UpgradeTests(CandidateUpgradeTests):
+    previous_version='4.0.0-rc7'
 
 class IdentityDeliveryTests(unittest.TestCase):
     def setUp(self):

@@ -1,0 +1,8 @@
+{
+  "identity.py": "6b647beea11665878ebcef4d51e451211eca05c6672c55863a7e953a22271000",
+  "health.py": "24310ae2193b3299179cddcde1aa1cbe0e7c8c83609620c3918c98a7c5ada623",
+  "capabilities.py": "4d1378e5787b723714e248c07327ccca19175fbf30588b4430d1c0304f62b900",
+  "collector.py": "f772e34ef08aba3af48386ccf0b501e7311690d0918ac65d457dce35ff8d9693",
+  "duplika-betterstack-v4.service": "f3bfd54afaa0f4e9def9e8580b7b816bd107e777f7a01e51d997076c89e8e654",
+  "duplika-betterstack-v4.timer": "60458e195d11e48cad4c910ec05c7578f47dc400b980fe32fee49ceb76edc820"
+}

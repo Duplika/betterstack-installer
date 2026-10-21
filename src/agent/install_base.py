@@ -210,7 +210,7 @@ Description=Duplika CloudLinux - read-only account and process observer
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /etc/duplika-betterstack-cloudlinux/collector.py
+ExecStart=__PYTHON__ -E -s -B /etc/duplika-betterstack-cloudlinux/collector.py
 TimeoutStartSec=50
 UMask=0027
 Nice=15
@@ -222,7 +222,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 ReadWritePaths=/var/lib/duplika-betterstack-cloudlinux/private /var/lib/duplika-betterstack-cloudlinux/spool
-'''
+'''.replace('__PYTHON__', sys.executable)
         if profile['wordpress']:
             collector_unit = collector_unit.replace('ProtectHome=true', 'ProtectHome=tmpfs\n' + ''.join(
                 'BindReadOnlyPaths=' + site['docroot'] + '\n' for site in profile['wordpress']))

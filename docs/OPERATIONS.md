@@ -29,14 +29,21 @@ La identidad completa se envía inicialmente, ante cambios de estado/integridad/
 
 ## Límites
 
-EL9 con cPanel únicamente. Los nombres históricos de unidades/directorios CloudLinux se conservan en instalaciones nuevas también sobre AlmaLinux para mantener un transporte probado; `os_id` informa el sistema real.
+EL9 con cPanel para altas nuevas; también migraciones v3 revisadas de AlmaLinux 8 usando Python 3.9–3.12 ya instalado. EL8 requiere aceptación nativa de systemd/needs-restarting en destino. Los nombres históricos de unidades/directorios CloudLinux se conservan en instalaciones nuevas también sobre AlmaLinux para mantener un transporte probado; `os_id` informa el sistema real.
 
 Domlogs: presupuesto 8 MiB por ciclo y 2 MiB por archivo. Se informa pérdida de cobertura por topes/rotaciones/formato. Los buffers y spool son acotados. Procesos breves pueden escapar al muestreo de un minuto; consumo por usuario no equivale siempre a atribución exacta por dominio.
 
-Migraciones v3: conservar pipelines, ACL y extensiones existentes. rc7 admite además una migración específica de instalaciones nuevas observer-v4 rc3, rc4, rc5 y rc6: exige marcador completo, destino y capacidades iguales, hashes oficiales de los tres helpers, recolector y unidades de identidad, snapshot sin drift y servicios sanos. Respalda la capa de identidad y revierte si falla la activación; no modifica perfiles, Vector, recolector, checkpoints ni buffers. Otras versiones/layouts v4 requieren revisión explícita. `resume` se limita a terminar identidad sobre una base nueva ya completa y sin cambios; no repara una base incompleta.
+Migraciones v3: conservar pipelines, ACL y extensiones existentes salvo reducción explícita --simplify-context de la base context-r6 revisada. rc8 admite además una migración específica de instalaciones nuevas observer-v4 rc3, rc4, rc5, rc6 y rc7: exige marcador completo, destino y capacidades iguales, hashes oficiales de los tres helpers, recolector y unidades de identidad, snapshot sin drift y servicios sanos. Respalda la capa de identidad y revierte si falla la activación; no modifica perfiles, Vector, recolector, checkpoints ni buffers. Otras versiones/layouts v4 requieren revisión explícita. `resume` se limita a terminar identidad sobre una base nueva ya completa y sin cambios; no repara una base incompleta.
 
 ## Actualización del paquete Vector entre v3 y v4
 
 Si la única diferencia frente a la referencia v3 es vector_running_binary_sha256 y todos los servicios están sanos, rc7 verifica que el proceso activo corresponde al mismo dispositivo/inode del Vector instalado. Consulta el paquete propietario mediante RPM, exige nombre vector, algoritmo SHA256 y coincidencia exacta del hash observado con FILEDIGESTS para esa ruta. Cualquier cambio simultáneo de configuración, perfil, auxiliares o unidades se sigue rechazando.
 
 Es una comprobación puntual de migración y no agrega lectura horaria del binario. No descarga ni instala paquetes. Confía en la base RPM local del sistema; no constituye verificación independiente de la firma del paquete. El manifiesto v4 conserva el resultado en migration_review, incluido el hash previo; el manifiesto y la referencia v3 no se reescriben. No se altera el propietario de directorios de datos para hacer coincidir todo el paquete RPM: se conserva la separación de privilegios del monitor.
+
+
+## Limpieza context-r6
+
+--simplify-context es opcional y sólo admite preflight/upgrade sobre la base v3 reconocida. Preflight no aplica cambios; ejecuta pruebas Vector y validación sin entorno/red usando un archivo temporal privado con la credencial existente. Upgrade repite la revisión, respalda configuración y los tres archivos del lector, detiene su timer/servicio, detiene Vector, cambia el pipeline y arranca Vector. Luego activa la nueva identidad. Cualquier fallo de la transacción restaura configuración, modo, uid/gid y estado previo de servicios. No borra data_dir, posiciones, relay ni estado de origen; no toca instrumentación SQL externa.
+
+Retira contexto cPanel y eventos programados rutinarios de cron. Se conservan errores PHP/LiteSpeed/WooCommerce, métricas y journal de servicios/kernel/crashes. El auxiliar ACL se conserva porque mantiene lectura de logs tras rotaciones. No bajar controles de drift ni ignorar un servicio de recolección fallido para migrar. El estado fallido de la identidad v3 se investiga con preflight; no se considera resuelto sólo por elegir otro intérprete.

@@ -11,7 +11,7 @@ import re
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENT = ('capabilities.py', 'collector.py', 'config.py', 'health.py', 'identity.py', 'install_base.py', 'installer.py', 'upgrade_rc3.json', 'upgrade_rc4.json', 'upgrade_rc5.json', 'upgrade_rc6.json')
+AGENT = ('capabilities.py', 'collector.py', 'config.py', 'health.py', 'identity.py', 'install_base.py', 'installer.py', 'context_cleanup.py', 'upgrade_rc3.json', 'upgrade_rc4.json', 'upgrade_rc5.json', 'upgrade_rc6.json', 'upgrade_rc7.json')
 LEGACY = ('legacy_identity.py', 'legacy_cloud_config.py', 'legacy_cloud_collector.py',
           'legacy_alma_profile.py', 'legacy_alma_acl.py', 'legacy_context_reference.py',
           'legacy_context_acl.py', 'legacy_context_reader.py')
@@ -50,7 +50,14 @@ umask 077
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 export PYTHONDONTWRITEBYTECODE=1
 [[ $EUID -eq 0 ]] || { echo 'Ejecutar como root.' >&2; exit 1; }
-[[ -x /usr/bin/python3 ]] || { echo 'Se requiere Python 3.9 o posterior.' >&2; exit 1; }
+bs4_python=''
+for bs4_candidate in /usr/bin/python3 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3.9; do
+  if [[ -x "$bs4_candidate" ]] && "$bs4_candidate" -I -c 'import sys; sys.exit(not ((3, 9) <= sys.version_info[:2] < (3, 13)))'; then
+    bs4_python="$bs4_candidate"
+    break
+  fi
+done
+[[ -n "$bs4_python" ]] || { echo 'Se requiere Python 3.9 a 3.12; no se modifica el Python del sistema.' >&2; exit 1; }
 bs4_work=$(mktemp -d /root/duplika-release4.XXXXXX)
 trap 'rm -rf -- "$bs4_work"' EXIT
 base64 --decode > "$bs4_work/payload.tgz" <<'DUPLIKA_4_PAYLOAD'
@@ -58,7 +65,7 @@ __PAYLOAD__DUPLIKA_4_PAYLOAD
 printf '%s  %s\\n' '__PAYLOAD_SHA__' "$bs4_work/payload.tgz" | sha256sum --check --status
 tar -xzf "$bs4_work/payload.tgz" -C "$bs4_work"
 rm "$bs4_work/payload.tgz"
-/usr/bin/python3 "$bs4_work/installer.py" "$@"
+"$bs4_python" -E -s -B "$bs4_work/installer.py" "$@"
 '''.replace('__VERSION__',version()).replace('__PAYLOAD__',base64.encodebytes(payload).decode()).replace('__PAYLOAD_SHA__',payload_sha)
     output.write_text(script); output.chmod(0o600)
     digest = hashlib.sha256(output.read_bytes()).hexdigest()
