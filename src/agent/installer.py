@@ -13,6 +13,7 @@ import re
 import shutil
 import shlex
 import socket
+import pwd
 import subprocess
 import sys
 import tempfile
@@ -442,10 +443,55 @@ WantedBy=timers.target
         raise
 
 
-def fresh(target, caps, credential):
+def validate_bootstrap_recovery(target):
+    """Only an early DNF failure before any observer/account/config/spool exists."""
+    for path in (CLOUD, CLOUD_DATA, BASE / 'manifest.json', BASE / 'complete', LEGACY,
+                 Path('/etc/duplika-betterstack'), Path('/etc/vector/duplika-profile.json')):
+        if path.exists() or path.is_symlink():
+            raise RuntimeError('bootstrap_recovery:existing_base_or_legacy')
+    if load(STATE / 'install-pending.json') != {'phase': 'base_installing', 'target': target}:
+        raise RuntimeError('bootstrap_recovery:target_or_phase')
+    failure = load(STATE / 'last-error.json')
+    if (failure.get('stage') != 'install' or failure.get('exit_code') != 1
+            or not re.search(r'(?:^|\n)ERROR: command_failed:dnf:exit=1(?:\n|$)', failure.get('diagnostic', ''))):
+        raise RuntimeError('bootstrap_recovery:unreviewed_failure')
+    try:
+        pwd.getpwnam('duplikaobs')
+    except KeyError:
+        pass
+    else:
+        raise RuntimeError('bootstrap_recovery:existing_reader')
+    if trusted_executable('vector'):
+        raise RuntimeError('bootstrap_recovery:existing_vector_requires_review')
+    # Reject unit fragments/drop-ins in all standard administrator/vendor/runtime roots.
+    for name in ('duplika-betterstack-cloudlinux', 'duplika-cloudlinux-observer',
+                 'duplika-storage-observer', NAME):
+        for suffix in ('.service', '.timer', '.service.d', '.timer.d'):
+            for folder in (UNITS, Path('/usr/lib/systemd/system'), Path('/run/systemd/system')):
+                path = folder / (name + suffix)
+                if path.exists() or path.is_symlink():
+                    raise RuntimeError('bootstrap_recovery:existing_unit')
+    return failure
+
+
+def base_preflight(target):
+    with tempfile.TemporaryDirectory(prefix='duplika-preflight4-', dir='/root') as folder:
+        stage = Path(folder)
+        for name in ('install_base.py', 'config.py', 'collector.py', 'capabilities.py'):
+            shutil.copyfile(HERE / name, stage / name)
+        write(stage / 'deployment.json', identity.canonical(target))
+        response = run([sys.executable, str(stage / 'install_base.py'), '--preflight'])
+        if response.returncode:
+            print((response.stdout + '\n' + response.stderr)[-6000:], file=sys.stderr)
+            raise RuntimeError('preflight:base_checks_failed')
+
+
+def fresh(target, caps, credential, recover_bootstrap=False):
     if caps['os_id'] == 'almalinux' and caps['os_version'].split('.')[0] == '8':
         raise RuntimeError('install:almalinux8_reviewed_migration_only')
-    if (BASE / 'manifest.json').exists() or (STATE / 'install-pending.json').exists():
+    if recover_bootstrap:
+        validate_bootstrap_recovery(target)
+    elif (BASE / 'manifest.json').exists() or (STATE / 'install-pending.json').exists():
         raise RuntimeError('install:existing_state_use_status_or_resume')
     creds = load(credential)
     if set(creds) != {'source_id', 'host', 'token'} or creds['source_id'] != target['source_id'] or creds['host'] != target['ingesting_host'] or not re.fullmatch(r'[A-Za-z0-9_.-]+', creds.get('token', '')):
@@ -464,7 +510,7 @@ def fresh(target, caps, credential):
             command = [sys.executable, str(stage / 'install_base.py')]
             if operation == 'preflight':
                 command.append('--preflight')
-            response = run(command, timeout=600)
+            response = run(command, timeout=1200 if operation == 'install' else 120)
             if response.returncode:
                 diagnostic = (response.stdout + '\n' + response.stderr).replace(creds['token'], '[TOKEN]')[-6000:]
                 write(STATE / 'last-error.json', identity.canonical({'stage': operation, 'exit_code': response.returncode, 'diagnostic': diagnostic}))
@@ -721,11 +767,15 @@ def main():
     p.add_argument('--source-id', type=int)
     p.add_argument('--ingesting-host')
     p.add_argument('--credential', type=Path)
+    p.add_argument('--recover-bootstrap', action='store_true',
+                   help='Reanudar fallo DNF temprano sin base/usuario/servicios del agente')
     p.add_argument('--recover-partial', action='store_true',
                    help='Recuperar sólo la base rc11 detenida por timeout LVE revisado')
     p.add_argument('--simplify-context', action='store_true',
                    help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
     args = p.parse_args()
+    if args.recover_bootstrap and (args.operation not in ('preflight', 'resume') or args.recover_partial or args.simplify_context):
+        p.error('--recover-bootstrap sólo admite preflight/resume sin otras migraciones')
     if args.recover_partial and args.operation not in ('preflight', 'resume'):
         p.error('--recover-partial sólo admite preflight/resume')
     if args.recover_partial and args.simplify_context:
@@ -766,6 +816,20 @@ def main():
         p.error('--target es obligatorio')
     target = load(args.target)
     caps = secure_target(target)
+    if args.recover_bootstrap:
+        validate_bootstrap_recovery(target)
+        if args.operation == 'preflight':
+            base_preflight(target)
+            print(json.dumps({'host': target['host'], 'source_id': target['source_id'],
+                'installer_version': VERSION, 'recovery': 'early_dnf_bootstrap',
+                'capabilities': caps, 'changes_applied': False}, indent=2))
+        else:
+            if not args.credential:
+                p.error('--credential es obligatorio para reanudar bootstrap')
+            # Preserve original failure/marker in a root-only backup; do not erase state.
+            backup([STATE / 'install-pending.json', STATE / 'last-error.json'], [])
+            fresh(target, caps, args.credential, recover_bootstrap=True)
+        return
     if args.recover_partial:
         import partial_recovery
         if args.operation == 'preflight':
@@ -808,15 +872,7 @@ def main():
                 raise RuntimeError('cleanup:requires_reviewed_context_v3')
             if caps['os_id'] == 'almalinux' and caps['os_version'].split('.')[0] == '8':
                 raise RuntimeError('install:almalinux8_reviewed_migration_only')
-            with tempfile.TemporaryDirectory(prefix='duplika-preflight4-', dir='/root') as folder:
-                stage = Path(folder)
-                for name in ('install_base.py', 'config.py', 'collector.py', 'capabilities.py'):
-                    shutil.copyfile(HERE / name, stage / name)
-                write(stage / 'deployment.json', identity.canonical(target))
-                response = run([sys.executable, str(stage / 'install_base.py'), '--preflight'])
-                if response.returncode:
-                    print((response.stdout + '\n' + response.stderr)[-6000:], file=sys.stderr)
-                    raise RuntimeError('preflight:base_checks_failed')
+            base_preflight(target)
         print(json.dumps({'host': target['host'], 'source_id': target['source_id'],
             'capabilities': caps, 'migration_from': previous, 'installer_version': VERSION,
             'changes_applied': False}, indent=2))

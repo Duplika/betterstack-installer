@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import shutil
 import socket
 import subprocess
@@ -27,6 +28,9 @@ TARGET = DEPLOYMENT['server_ip']
 def run(args, check=True, timeout=120):
     p = probe_run(args, timeout=timeout)
     if check and p.returncode:
+        if Path(args[0]).name == 'dnf':
+            diagnostic = re.sub(r'https?://[^\s]+', '[URL]', p.stdout + '\n' + p.stderr)[-4000:]
+            print('DNF diagnostic (bounded, URLs removed):\n' + diagnostic, file=sys.stderr)
         raise RuntimeError('command_failed:' + Path(args[0]).name + ':exit=' + str(p.returncode))
     return p
 
@@ -112,6 +116,11 @@ def preflight():
     print('Preflight correcto. No se leyó ningún wp-config.php ni log de una aplicación.')
     return profile
 
+def ensure_certificates():
+    if run(['rpm', '-q', 'ca-certificates'], check=False).returncode:
+        run(['dnf', '-y', 'install', 'ca-certificates'], timeout=600)
+
+
 def verify():
     for name in (SERVICE + '.service', COLLECTOR + '.timer'):
         p = run(['systemctl', 'is-active', name], check=False)
@@ -144,14 +153,14 @@ def main():
     vector = trusted_executable('vector')
     if not vector:
         # Official signed RPM repository, without a system-wide upgrade.
-        run(['dnf', '-y', 'install', 'ca-certificates'])
+        ensure_certificates()
         if not shutil.which('curl'):
-            run(['dnf', '-y', 'install', 'curl'])
+            run(['dnf', '-y', 'install', 'curl'], timeout=600)
         repo = HERE / 'vector-repo.sh'
         run(['curl', '--proto', '=https', '--tlsv1.2', '-fsSL', '--connect-timeout', '15',
              '--max-time', '120', 'https://setup.vector.dev', '-o', str(repo)])
         run(['bash', str(repo)], timeout=180)
-        run(['dnf', '-y', 'install', 'vector'], timeout=300)
+        run(['dnf', '-y', 'install', 'vector'], timeout=600)
         # Only the newly installed vendor service; existing Vector installations are untouched.
         run(['systemctl', 'disable', '--now', 'vector.service'], check=False)
         vector = trusted_executable('vector')

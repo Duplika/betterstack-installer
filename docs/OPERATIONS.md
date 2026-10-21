@@ -97,3 +97,8 @@ Para capacidad de discos, contrastar el namespace protegido con df/findmnt nativ
 Ver README, sección Almacenamiento rc14. Ejecutar storage-preflight --host HOST en el destino: comprobar cada volumen local frente a df/findmnt, opciones read-only del host, RAID y ausencia de duplicados CageFS. Al instalar/actualizar rc13, la sonda debe completar su primer ciclo antes de habilitar el timer e identidad. La recepción de volúmenes y RAID se acepta aparte en Better Stack; SMART se reparte una unidad por ciclo y puede seguir desconocido. Datos físicos no disponibles en VPS no equivalen a discos sanos.
 
 El transporte sigue activo en actualización; no cambia su token, configuración ni cursores. La sonda escribe métricas/eventos propios, independientes del spool del colector. Ante falla se restaura runtime y estados de unidades sin retroceder cursores. Si existe una unidad, drop-in o storage.py desconocido, se rechaza en vez de sobrescribir. Las instalaciones antiguas sin esta sonda no se dan por monitoreadas en todos sus volúmenes.
+
+
+## Fallo de paquetes antes de crear la base
+
+rc15 incorpora --recover-bootstrap, separado de --recover-partial rc11. Revisar el diagnóstico real: --assumeno puede devolver1 sólo por cancelar. No borrar install-pending.json, fuente, credencial o carpetas. Si Vector o alguna pieza de la base ya existe, la reanudación temprana se rechaza; investigar ese estado en vez de forzar. Usar primero preflight --recover-bootstrap --target PERFIL; luego resume con esos parámetros y --credential existente. Verificar el primer ciclo, almacenamiento y recepción de identidad/métricas después.

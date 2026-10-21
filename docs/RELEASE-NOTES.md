@@ -1,3 +1,13 @@
+# 4.0.0-rc15 — candidata: recuperación temprana DNF y diagnóstico acotado
+
+No consulta repositorios para ca-certificates ya instalado (rpm -q local). Un fallo DNF conserva diagnóstico acotado con URLs eliminadas; ya no se pierde la explicación detrás del código genérico. Timeouts de paquetes600s y etapa de alta1200s, sin esperas ilimitadas ni tareas de repositorio durante monitoreo.
+
+--recover-bootstrap explícito sólo para preflight/resume de fallo DNF antes de crear Vector, usuario, directorios, configuración o servicios propios. Valida destino/marcador/error y ausencia de bases, usuario y unidades/drop-ins desconocidos; rechaza Vector existente. Respalda marcadores antes de reanudar con la credencial guardada; no borra estado ni vuelve a pedir token. Una base que haya avanzado necesita revisión distinta. Sin cambios al recolector, almacenamiento, Vector o políticas de lectura frente a rc14.
+
+Pruebas de validación sin mutaciones, rechazo de destino/fase/fallo distinto, usuario/base/symlink/drop-ins existentes, preservación de credencial/error, salto de DNF con certificados instalados y diagnóstico sin URLs privadas. Recuperación real y aceptación remota pendientes; no promoción estable ni despliegue masivo.
+
+## Historial
+
 # 4.0.0-rc14 — candidata: capacidad local, MD RAID y SMART acotado
 
 Agrega storage.py como sonda breve separada en altas nuevas y actualización revisada observer-v4 rc13. Capacidad/inodos y opciones del montaje real por minuto, deduplicación de CageFS sin excluir el volumen original de MySQL, y estado MD RAID. Dispositivo comprobado contra mountinfo del host mediante descriptor al montaje; error explícito si está oculto o cambió. No hay lectura recursiva ni cambios en Vector, aplicaciones o unidades existentes del colector.

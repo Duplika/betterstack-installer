@@ -2,7 +2,7 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 8 y 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc14 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc15 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 **No usar rc8:** se conserva como artefacto histórico; su escritura de permisos y reversión tienen fallos corregidos en rc9.
 
@@ -20,12 +20,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc14/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc15/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc14/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc15/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -132,3 +132,9 @@ bash /root/installer.sh storage-preflight --host cloud.example.net
 Ejecuta la misma protección de montajes en una unidad transitoria y sólo consulta capacidad, RAID e inventario de dispositivos; no ejecuta SMART ni deja servicios persistentes. Confirmar recepción remota después de instalar, incluyendo cada volumen real. RAID/SMART desconocido no se interpreta como saludable. Los prefijos nuevos son duplika_storage_volume_, duplika_storage_raid_ y duplika_storage_smart_. Las métricas históricas de Vector no cambian.
 
 Actualización revisada con esta sonda: base completa observer-v4 rc13 → rc14, con backup/reversión, fuente y transporte conservados. Las migraciones v4 anteriores mantienen su alcance previo y no incorporan automáticamente almacenamiento; las variantes Alma heredadas requieren revisión específica. No actualizar toda la flota ni promover a estable antes del piloto nativo/remoto.
+
+## Recuperación temprana DNF rc15
+
+Si una alta falló con command_failed:dnf:exit=1 antes de crear el usuario, directorios, configuración y unidades del observador, usar preflight --recover-bootstrap y resume --recover-bootstrap --credential ARCHIVO con el mismo --target. Exige marcador base_installing del destino exacto, error DNF de instalación, ausencia de Vector, de bases completas/legacy, del usuario reservado, directorios de datos y fragmentos/drop-ins de las unidades. Rechaza cualquier base parcialmente configurada. Preflight no instala paquetes; resume conserva la credencial existente y respalda marcador/error sin borrar estado. No usar install ni credential de nuevo.
+
+rc15 evita invocar DNF para ca-certificates ya instalado. Si falla DNF conserva hasta4000caracteres de diagnóstico, con URLs eliminadas, en el error privado del instalador. No confundir un exit1 de --assumeno por cancelación deliberada con el fallo original. Los pasos de paquetes tienen timeout600s y la etapa de alta1200s, porque una primera descarga de metadatos puede tardar varios minutos. No refresca repositorios periódicamente durante el monitoreo, actualiza el sistema ni omite GPG. Almacenamiento/configuración Vector sin cambios frente a rc14; aceptación nativa/remota sigue necesaria.
