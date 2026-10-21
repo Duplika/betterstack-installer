@@ -31,8 +31,8 @@ El workflow puede publicar manualmente una candidata como borrador, adjuntar tod
 Las comprobaciones criptográficas de releases inmutables son distintas de la atestación del build. Si la release está publicada y marcada inmutable, GitHub CLI compatible también permite:
 
 ```bash
-gh release verify v4.0.0-rc6 --repo Duplika/betterstack-installer
-gh release verify-asset v4.0.0-rc6 /root/installer.sh --repo Duplika/betterstack-installer
+gh release verify v4.0.0-rc7 --repo Duplika/betterstack-installer
+gh release verify-asset v4.0.0-rc7 /root/installer.sh --repo Duplika/betterstack-installer
 ```
 
 No mover tags ni reemplazar assets publicados; corregir mediante una nueva versión.

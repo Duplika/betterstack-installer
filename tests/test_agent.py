@@ -190,18 +190,25 @@ class ReviewedMigrationTests(unittest.TestCase):
                'almalinux-wordpress-v2':('/etc/duplika-betterstack/vector.yaml','/etc/duplika-betterstack/profile.json'),
                'almalinux-wordpress-context-r6':('/etc/vector/vector.yaml','/etc/vector/duplika-profile.json')}
         cfg,profile=paths[variant]
-        return {'baseline':{'files':{}},'spec':{'target':dict(TARGET,template_version='3'),
+        return {'baseline':{'files':{},'vector_running_binary_sha256':'a'*64},'spec':{'target':dict(TARGET,template_version='3'),
             'base_variant':variant,'config':cfg,'profile':profile}}
-    def validate(self,variant,drift=False,healthy=True):
+    def validate(self,variant,drift=False,healthy=True,binary_update=False,proof_error=False):
         import types
         old=self.old(variant)
+        current=copy.deepcopy(old['baseline'])
+        if binary_update:current['vector_running_binary_sha256']='b'*64
+        if drift:current['unexpected_change']=True
         fake=types.SimpleNamespace(expected_config=lambda spec:None,
-            observe=lambda spec:({'different':True} if drift else old['baseline'],{'service':healthy},'', ''))
+            observe=lambda spec:(current,{'service':healthy},'', ''))
         spec=types.SimpleNamespace(loader=types.SimpleNamespace(exec_module=lambda module:None))
         with tempfile.TemporaryDirectory(dir='/root') as d:
             root=Path(d);(root/'complete').write_text('yes')
-            with patch.object(installer,'LEGACY',root),patch.object(installer,'load',return_value=old),patch.object(installer.shutil,'copyfile'),patch.object(identity,'read',return_value=b'reviewed'),patch.object(installer.importlib.util,'spec_from_file_location',return_value=spec),patch.object(installer.importlib.util,'module_from_spec',return_value=fake):
-                return installer.validate_migration(TARGET)
+            with patch.object(installer,'LEGACY',root),patch.object(installer,'load',return_value=old),patch.object(installer.shutil,'copyfile'),patch.object(identity,'read',return_value=b'reviewed'),patch.object(installer.importlib.util,'spec_from_file_location',return_value=spec),patch.object(installer.importlib.util,'module_from_spec',return_value=fake),patch.object(installer,'verify_packaged_vector',return_value={'kind':'rpm_verified_vector_update'},side_effect=RuntimeError('rpm proof failed') if proof_error else None) as review:
+                answer=installer.validate_migration(TARGET)
+                if binary_update:review.assert_called_once_with(old['spec'],'b'*64)
+                else:review.assert_not_called()
+                self.assertEqual(old['baseline']['vector_running_binary_sha256'],'a'*64)
+                return answer
     def test_all_three_reviewed_variants(self):
         for variant in ('cloudlinux-v2','almalinux-wordpress-v2','almalinux-wordpress-context-r6'):
             self.assertEqual(self.validate(variant)['spec']['base_variant'],variant)
@@ -209,6 +216,63 @@ class ReviewedMigrationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'drift_or_unhealthy'):self.validate('cloudlinux-v2',drift=True)
     def test_unhealthy_service_blocks_adoption(self):
         with self.assertRaisesRegex(RuntimeError,'drift_or_unhealthy'):self.validate('almalinux-wordpress-v2',healthy=False)
+    def test_reviewed_package_update_allowed_for_all_three_v3_variants(self):
+        for variant in ('cloudlinux-v2','almalinux-wordpress-v2','almalinux-wordpress-context-r6'):
+            answer=self.validate(variant,binary_update=True)
+            self.assertEqual(answer['migration_review']['previous_sha256'],'a'*64)
+            self.assertEqual(answer['baseline']['vector_running_binary_sha256'],'a'*64)
+    def test_package_update_does_not_hide_other_drift_or_failed_services(self):
+        for change in ({'drift':True},{'healthy':False}):
+            with self.assertRaisesRegex(RuntimeError,'drift_or_unhealthy'):
+                self.validate('almalinux-wordpress-v2',binary_update=True,**change)
+    def test_failed_package_verification_blocks_migration(self):
+        with self.assertRaisesRegex(RuntimeError,'rpm proof failed'):
+            self.validate('almalinux-wordpress-v2',binary_update=True,proof_error=True)
+
+class VectorPackageTests(unittest.TestCase):
+    def setUp(self):
+        import contextlib
+        import hashlib
+        self.stack=contextlib.ExitStack();self.addCleanup(self.stack.close)
+        self.root=Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir='/root')))
+        self.binary=self.root/'vector';self.binary.write_bytes(b'reviewed package binary')
+        self.digest=hashlib.sha256(self.binary.read_bytes()).hexdigest()
+        self.metadata='vector\n0.60.0-1.x86_64\n8\n'
+        self.listing=str(self.binary)+'\t'+self.digest+'\n/var/lib/vector\t\n'
+        self.running=self.binary.stat()
+        self.stack.enter_context(patch.object(installer,'trusted_executable',side_effect=lambda name:str(self.binary) if name=='vector' else '/usr/bin/rpm'))
+        original_stat=installer.os.stat
+        def stat(path,*args,**kwargs):
+            if str(path)=='/proc/123/exe':return self.running
+            return original_stat(path,*args,**kwargs)
+        self.stack.enter_context(patch.object(installer.os,'stat',side_effect=stat))
+        def execute(args):
+            if args[0]=='systemctl':return result('123\n')
+            self.assertEqual(args[:3],['/usr/bin/rpm','-qf','--qf'])
+            self.assertEqual(args[-1],str(self.binary))
+            return result(self.listing if 'FILENAMES' in args[3] else self.metadata)
+        self.execute=self.stack.enter_context(patch.object(installer,'execute',side_effect=execute))
+    def verify(self):
+        return installer.verify_packaged_vector({'vector_service':'fixture.service'},self.digest)
+    def test_installed_running_binary_matches_package(self):
+        review=self.verify()
+        self.assertEqual(review['package'],'vector-0.60.0-1.x86_64')
+        self.assertEqual(review['accepted_sha256'],self.digest)
+    def test_changed_binary_rejected(self):
+        self.listing=self.listing.replace(self.digest,'0'*64)
+        with self.assertRaisesRegex(RuntimeError,'does_not_match_rpm_digest'):self.verify()
+    def test_running_deleted_or_different_file_rejected(self):
+        import types
+        self.running=types.SimpleNamespace(st_dev=self.running.st_dev,st_ino=self.running.st_ino+1)
+        with self.assertRaisesRegex(RuntimeError,'running_file_differs'):self.verify()
+    def test_wrong_owner_package_or_algorithm_rejected(self):
+        for metadata in ('other\n1-1.x86_64\n8\n','vector\n1-1.x86_64\n1\n'):
+            self.metadata=metadata
+            with self.assertRaisesRegex(RuntimeError,'unexpected_vector_package'):self.verify()
+    def test_missing_or_duplicate_file_digest_rejected(self):
+        for listing in ('/different/path\t'+self.digest+'\n',self.listing+self.listing):
+            self.listing=listing
+            with self.assertRaisesRegex(RuntimeError,'does_not_match_rpm_digest'):self.verify()
 
 class ResumeTests(unittest.TestCase):
     def test_resume_rejects_changed_base_without_activation(self):

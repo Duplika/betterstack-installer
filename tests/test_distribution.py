@@ -185,6 +185,9 @@ class Rc4UpgradeTests(CandidateUpgradeTests):
 class Rc5UpgradeTests(CandidateUpgradeTests):
     previous_version='4.0.0-rc5'
 
+class Rc6UpgradeTests(CandidateUpgradeTests):
+    previous_version='4.0.0-rc6'
+
 class IdentityDeliveryTests(unittest.TestCase):
     def setUp(self):
         import contextlib

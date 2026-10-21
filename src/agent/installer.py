@@ -88,6 +88,33 @@ def secure_target(target):
     return detect()
 
 
+def verify_packaged_vector(spec, observed_sha):
+    """One-time migration check against the local RPM database, no downloads."""
+    binary = trusted_executable('vector')
+    rpm = trusted_executable('rpm')
+    if not binary or not rpm or not re.fullmatch(r'[0-9a-f]{64}', observed_sha):
+        raise RuntimeError('upgrade:vector_package_verification_unavailable')
+    binary = Path(binary).resolve()
+    pid = execute(['systemctl', 'show', spec['vector_service'], '-p', 'MainPID', '--value']).stdout.strip()
+    if not re.fullmatch(r'[1-9][0-9]*', pid):
+        raise RuntimeError('upgrade:vector_process_missing')
+    installed = binary.stat()
+    running = (Path('/proc') / pid / 'exe').stat()
+    if (installed.st_dev, installed.st_ino) != (running.st_dev, running.st_ino):
+        raise RuntimeError('upgrade:vector_running_file_differs_from_installed')
+    metadata = execute([rpm, '-qf', '--qf', '%{NAME}\n%{VERSION}-%{RELEASE}.%{ARCH}\n%{FILEDIGESTALGO}\n', str(binary)]).stdout.splitlines()
+    if (len(metadata) != 3 or metadata[0] != 'vector' or metadata[2] != '8'
+            or not re.fullmatch(r'[A-Za-z0-9_.+~:-]{1,200}', metadata[1])):
+        raise RuntimeError('upgrade:unexpected_vector_package_or_digest_algorithm')
+    listing = execute([rpm, '-qf', '--qf', '[%{FILENAMES}\t%{FILEDIGESTS}\n]', str(binary)]).stdout
+    matches = [line.split('\t', 1)[1] for line in listing.splitlines()
+               if '\t' in line and line.split('\t', 1)[0] == str(binary)]
+    if matches != [observed_sha]:
+        raise RuntimeError('upgrade:vector_binary_does_not_match_rpm_digest')
+    return {'kind': 'rpm_verified_vector_update', 'package': 'vector-' + metadata[1],
+            'binary_path': str(binary), 'accepted_sha256': observed_sha}
+
+
 def validate_migration(target):
     """Full old identity check before changing a byte; old pipeline stays intact."""
     if not (LEGACY / 'complete').exists():
@@ -124,8 +151,16 @@ def validate_migration(target):
         legacy.HERE = stage
         legacy.expected_config(spec)
         snapshot, health, _, _ = legacy.observe(spec)
-    if snapshot != old['baseline'] or not all(health.values()):
+    changed = sorted(key for key in set(snapshot) | set(old['baseline'])
+                     if snapshot.get(key) != old['baseline'].get(key))
+    if not all(health.values()) or (changed and changed != ['vector_running_binary_sha256']):
         raise RuntimeError('upgrade:v3_drift_or_unhealthy_services')
+    if changed:
+        review = verify_packaged_vector(spec, snapshot['vector_running_binary_sha256'])
+        review['previous_sha256'] = old['baseline']['vector_running_binary_sha256']
+        # Preserve the original v3 baseline, including in its installed manifest.
+        old = dict(old, migration_review=review)
+        print('Cambio del binario Vector validado contra RPM; el resto de v3 coincide.')
     return old
 
 
@@ -172,7 +207,7 @@ def runtime_files():
     return [BASE / name for name in ('identity.py', 'health.py', 'capabilities.py')]
 
 
-def activate(target, caps, config, profile_path, services, oneshots, original_paths, vector, pipeline_variant="observer-v4"):
+def activate(target, caps, config, profile_path, services, oneshots, original_paths, vector, pipeline_variant="observer-v4", migration_review=None):
     for name in ('identity.py', 'health.py', 'capabilities.py'):
         write(BASE / name, (HERE / name).read_bytes())
     service = '''[Unit]
@@ -214,6 +249,8 @@ WantedBy=timers.target
         'target': target, 'capabilities': caps, 'pipeline_variant': pipeline_variant, 'config_path': str(config), 'profile_path': str(profile_path),
         'services': services + [NAME + '.timer'], 'oneshots': oneshots,
         'vector_binary': vector, 'critical_paths': critical, 'baseline': identity.snapshot(critical, str(config))}
+    if migration_review:
+        meta['migration_review'] = migration_review
     write(BASE / 'manifest.json', identity.canonical(meta))
     if trusted_executable('restorecon'):
         execute(['restorecon', '-RF', str(BASE), str(STATE)])
@@ -280,11 +317,11 @@ def observer_base_paths():
 
 
 def validate_v4_upgrade(target, caps):
-    """Only reviewed, complete rc3/rc4/rc5 observer layouts can receive this fix."""
+    """Only reviewed, complete rc3/rc4/rc5/rc6 observer layouts can migrate."""
     old = load(BASE / 'manifest.json')
     previous = old.get('agent_version')
     reviewed_versions = {'4.0.0-rc3': 'upgrade_rc3.json', '4.0.0-rc4': 'upgrade_rc4.json',
-                         '4.0.0-rc5': 'upgrade_rc5.json'}
+                         '4.0.0-rc5': 'upgrade_rc5.json', '4.0.0-rc6': 'upgrade_rc6.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -322,7 +359,7 @@ def upgrade_v4(target, caps):
         execute(['systemctl', 'stop', NAME + '.timer', NAME + '.service'])
         activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [name for name in old['services'] if name != NAME + '.timer'],
-            old['oneshots'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'])
+            old['oneshots'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'], old.get('migration_review'))
     except BaseException:
         restore(transaction)
         raise
@@ -375,7 +412,7 @@ def upgrade(target, caps):
         if not vector:
             raise RuntimeError('upgrade:vector_binary_missing')
         activate(target, caps, config, profile_path, spec['services'],
-                 [name[:-6] + '.service' for name in spec['services'] if name.endswith('.timer')], original, vector, 'observer-v4' if cloud else spec['base_variant'])
+                 [name[:-6] + '.service' for name in spec['services'] if name.endswith('.timer')], original, vector, 'observer-v4' if cloud else spec['base_variant'], old.get('migration_review'))
     except BaseException:
         restore(transaction)
         raise

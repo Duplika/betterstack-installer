@@ -1,4 +1,18 @@
-# 4.0.0-rc6 — candidata: recomendación simple de reinicio
+# 4.0.0-rc7 — candidata: migración tras actualizar Vector
+
+Permite migrar una instalación v3 revisada y saludable cuyo único cambio sea el binario de Vector por una actualización del paquete. Exige mismo archivo activo/instalado (dispositivo e inode), paquete propietario vector, algoritmo SHA256 y coincidencia del hash observado con FILEDIGESTS registrado en la base RPM local. Sigue rechazando otros cambios, binarios no coincidentes, paquetes desconocidos, hashes ausentes/duplicados y servicios no saludables.
+
+Guarda el resultado de revisión en el nuevo manifiesto v4, con el hash anterior. No modifica la referencia v3, instala/reinicia Vector ni descarga paquetes. La consulta RPM ocurre sólo durante preflight/migración; no agrega trabajo periódico al agente. El comportamiento de recolección, recomendación de reinicio y política de envíos de rc6 no cambia.
+
+Incluye migración revisada desde instalaciones nuevas observer-v4 rc6, además de rc3/rc4/rc5. Conserva las migraciones v3 de ambas familias y su respaldo/reversión.
+
+70 pruebas locales: actualización válida en los tres layouts v3, rechazo de cambios adicionales o servicios fallidos, comprobación RPM y migración/reversión desde los cuatro payloads v4 previos. Vector y su configuración no cambian. Falta ejecutar y aceptar la migración en destino.
+
+Referencias de formatos y hashes RPM: https://rpm.org/docs/latest/manual/tags y https://rpm.org/docs/4.20.x/manual/queryformat.html . La base RPM local es la referencia de esta comprobación; no se afirma una verificación independiente de firma.
+
+## Historial
+
+### 4.0.0-rc6 — candidata: recomendación simple de reinicio
 
 Simplifica mantenimiento a reboot_recommended (true/false/null), reboot_status (indicated/not_indicated/unknown), motivo y código de salida de la sonda. Usa needs-restarting -r una vez por hora para planificar mantenimiento manual. No clasifica urgencia ni consulta KernelCare, su estado de parches, red, logs o caché. No se amplían permisos del servicio.
 
