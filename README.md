@@ -2,7 +2,7 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 8 y 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc13 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc14 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 **No usar rc8:** se conserva como artefacto histórico; su escritura de permisos y reversión tienen fallos corregidos en rc9.
 
@@ -20,12 +20,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc13/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc14/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc13/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc14/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -114,3 +114,21 @@ Si una alta nueva rc11 quedó detenida por timeout LVE, rc12 admite `preflight -
 rc13 corrige la lectura de un domlog que crece entre descubrirlo y abrirlo. También asigna presupuesto a esos archivos inicialmente inactivos; conserva los topes de 8 MiB por ciclo y 2 MiB por archivo y la señal de cobertura parcial al superarlos.
 
 `preflight` y `upgrade` reconocen la base completa observer-v4 rc12 mediante hashes oficiales, mismo destino/capacidades y baseline intacta. La actualización espera un punto seguro con el lock del recolector, cambia su código y versión del perfil, y reanuda el timer. Conserva Vector activo, su configuración, credencial, unidades, spool y cursores. Si el ciclo no libera el lock en 60 segundos, aborta y restaura el estado anterior. Se requiere aceptación remota posterior; no es una actualización masiva ni una reparación de layouts desconocidos.
+
+## Almacenamiento rc14
+
+Altas nuevas incorporan una sonda separada para volúmenes locales montados, inodos y Linux MD RAID cada minuto. Deduplica dispositivos y prefiere el montaje canónico sobre aliases CageFS; no recorre directorios ni lee archivos de aplicaciones. La capacidad usa un descriptor fijado al volumen y comprueba su dispositivo para evitar datos de un montaje oculto o cambiado. Admite sistemas de archivos respaldados por /dev y los tipos locales enumerados en storage.py; no son inventario de volúmenes de red, swap ni dispositivos sin montar.
+
+La sonda breve usa ProtectSystem=strict y ProtectHome=read-only: ve los puntos de montaje reales de solo lectura. Esto NO oculta los archivos al proceso privilegiado de la sonda; su código fijo sólo abre directorios para statvfs. Vector y el observador existente conservan ProtectHome y no reciben acceso adicional. La sonda no tiene red IP, usa CPUQuota=5%, MemoryMax=96M y un timeout de 45 s. No usa PrivateTmp porque ocultaría un posible volumen /tmp separado. Sus métricas se guardan en streams propios compatibles con el glob de Vector existente; logs sólo ante cambios o diariamente y rotación de 1 MiB con dos archivos anteriores por stream.
+
+SMART es opcional según herramienta y hardware ya disponibles. No instala paquetes: consulta ATA directo y NVMe; SCSI, RAID hardware y otros transportes quedan explícitamente sin soporte en esta candidata. Una consulta de hasta 5 s por ciclo, repartida entre discos, máximo una por disco cada 6 h. ATA usa -d ata -n standby,3 para evitar autodetección que pueda despertar discos. No ejecuta self-tests, cambia energía ni habilita SMART. Un disco dormido, desconocido o inaccesible no produce salud falsa ni ceros inventados. Las métricas SMART se emiten sólo al consultar; smart_attempt_age_seconds indica antigüedad, no actualiza resultados viejos como si fueran nuevos. No almacena seriales, WWN ni respuestas crudas. No equivale a una garantía de salud física.
+
+Diagnóstico temporal antes de instalar (sin fuente ni token):
+
+```bash
+bash /root/installer.sh storage-preflight --host cloud.example.net
+```
+
+Ejecuta la misma protección de montajes en una unidad transitoria y sólo consulta capacidad, RAID e inventario de dispositivos; no ejecuta SMART ni deja servicios persistentes. Confirmar recepción remota después de instalar, incluyendo cada volumen real. RAID/SMART desconocido no se interpreta como saludable. Los prefijos nuevos son duplika_storage_volume_, duplika_storage_raid_ y duplika_storage_smart_. Las métricas históricas de Vector no cambian.
+
+Actualización revisada con esta sonda: base completa observer-v4 rc13 → rc14, con backup/reversión, fuente y transporte conservados. Las migraciones v4 anteriores mantienen su alcance previo y no incorporan automáticamente almacenamiento; las variantes Alma heredadas requieren revisión específica. No actualizar toda la flota ni promover a estable antes del piloto nativo/remoto.

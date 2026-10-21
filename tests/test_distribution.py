@@ -339,3 +339,48 @@ class IdentityDeliveryTests(unittest.TestCase):
         self.assertFalse(self.last.exists())
 
 if __name__=='__main__':unittest.main()
+
+
+class Rc13StorageUpgradeTests(Rc12UpgradeTests):
+    previous_version = '4.0.0-rc13'
+
+    def setUp(self):
+        super().setUp()
+        # The mocked native unit completes a real first storage cycle before activation.
+        (installer.CLOUD_DATA / 'private/storage-health.json').write_text(
+            json.dumps({'at': __import__('time').time(), 'probe_failures': 0}))
+        self.stack.enter_context(patch.object(installer, 'run', side_effect=self.unit_state))
+
+    def unit_state(self, args, **kwargs):
+        code = 3 if len(args) > 1 and args[1] in ('is-active', 'is-enabled') and any('duplika-storage-observer' in a for a in args) else 0
+        return types.SimpleNamespace(returncode=code)
+
+    def test_reviewed_rc3_upgrade_preserves_transport_and_state(self):
+        before = {p:p.read_bytes() for p in installer.observer_base_paths() if p.name not in ('collector.py','profile.json')}
+        cursor = installer.CLOUD_DATA / 'private/state.json'; cursor_before = cursor.read_bytes()
+        installer.upgrade(TARGET, self.caps)
+        self.assertEqual(before,{p:p.read_bytes() for p in before})
+        self.assertEqual(cursor.read_bytes(),cursor_before)
+        self.assertTrue(all(p.exists() for p in installer.storage_paths()))
+        meta=installer.load(installer.BASE/'manifest.json')
+        self.assertTrue(meta['storage_observer'])
+        self.assertIn('duplika-storage-observer.timer',meta['services'])
+        self.assertIn('duplika-storage-observer.service',meta['oneshots'])
+        transaction=installer.load(installer.load(installer.STATE/'last-transaction.json')['path'])
+        self.assertIn(str(installer.BASE/'manifest.json'),transaction['files'])
+        self.assertIn(str(installer.CLOUD/'storage.py'),transaction['files'])
+        commands=[call.args[0] for call in self.execute.call_args_list]
+        self.assertFalse(any('duplika-betterstack-cloudlinux.service' in cmd for cmd in commands))
+
+    def test_storage_failure_rolls_back_runtime_without_touching_cursors(self):
+        before={p:p.read_bytes() for p in installer.observer_base_paths()+installer.runtime_files()+[
+            installer.BASE/'manifest.json',installer.BASE/'complete',installer.CLOUD_DATA/'private/state.json']}
+        def execute(args, **kwargs):
+            if args == ['systemctl','start','duplika-storage-observer.service']:
+                raise RuntimeError('storage native failure')
+            return types.SimpleNamespace(returncode=0)
+        self.execute.side_effect=execute
+        with self.assertRaisesRegex(RuntimeError,'storage native failure'):
+            installer.upgrade(TARGET,self.caps)
+        self.assertEqual(before,{p:p.read_bytes() for p in before})
+        self.assertFalse(any(p.exists() for p in installer.storage_paths()))

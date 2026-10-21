@@ -118,6 +118,13 @@ def status(publish=False):
             services['observer_heartbeat'] = fresh and 'failed' not in heartbeat.get('components', {}).values()
         except (OSError, ValueError, StopIteration):
             services['observer_heartbeat'] = False
+    if meta.get('storage_observer'):
+        try:
+            storage = json.loads(read(Path('/var/lib/duplika-betterstack-cloudlinux/private/storage-health.json')))
+            services['storage_heartbeat'] = (0 <= time.time() - storage.get('at', 0) < 180
+                                              and storage.get('probe_failures') == 0)
+        except (OSError, ValueError, RuntimeError):
+            services['storage_heartbeat'] = False
     version = health.run([meta['vector_binary'], '--version'])
     vector_version = version.stdout.strip()[:160] if version.returncode == 0 else 'unknown'
     maintenance = health.observe()

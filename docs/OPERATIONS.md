@@ -90,3 +90,10 @@ La migración observer-v4 rc12 comprueba hashes de runtime oficiales, unidad de 
 Ante fallo restaura archivos y estados de timers mediante la transacción; un ciclo que haya actualizado legítimamente su estado conserva ese avance. La identidad local puede usar el heartbeat previo reciente: no representa comprobación del nuevo ciclo, que debe recibirse y verificarse por separado en Better Stack. Otras migraciones v4 rc3–rc7 mantienen su alcance preservador; rc8–rc11, variantes heredadas y otros layouts siguen requiriendo revisión específica.
 
 Para capacidad de discos, contrastar el namespace protegido con df/findmnt nativos. Si /home comparte filesystem con /, la raíz cubre ese volumen. Si tiene un volumen separado, requiere una solución de lectura de capacidad revisada antes de afirmar cobertura de almacenamiento; no retirar ProtectHome para que Vector acceda a los archivos de clientes.
+
+
+## Almacenamiento rc14
+
+Ver README, sección Almacenamiento rc14. Ejecutar storage-preflight --host HOST en el destino: comprobar cada volumen local frente a df/findmnt, opciones read-only del host, RAID y ausencia de duplicados CageFS. Al instalar/actualizar rc13, la sonda debe completar su primer ciclo antes de habilitar el timer e identidad. La recepción de volúmenes y RAID se acepta aparte en Better Stack; SMART se reparte una unidad por ciclo y puede seguir desconocido. Datos físicos no disponibles en VPS no equivalen a discos sanos.
+
+El transporte sigue activo en actualización; no cambia su token, configuración ni cursores. La sonda escribe métricas/eventos propios, independientes del spool del colector. Ante falla se restaura runtime y estados de unidades sin retroceder cursores. Si existe una unidad, drop-in o storage.py desconocido, se rechaza en vez de sobrescribir. Las instalaciones antiguas sin esta sonda no se dan por monitoreadas en todos sus volúmenes.

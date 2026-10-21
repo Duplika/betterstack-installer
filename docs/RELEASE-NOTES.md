@@ -1,3 +1,15 @@
+# 4.0.0-rc14 — candidata: capacidad local, MD RAID y SMART acotado
+
+Agrega storage.py como sonda breve separada en altas nuevas y actualización revisada observer-v4 rc13. Capacidad/inodos y opciones del montaje real por minuto, deduplicación de CageFS sin excluir el volumen original de MySQL, y estado MD RAID. Dispositivo comprobado contra mountinfo del host mediante descriptor al montaje; error explícito si está oculto o cambió. No hay lectura recursiva ni cambios en Vector, aplicaciones o unidades existentes del colector.
+
+SMART ATA/NVMe disponible sin instalar paquetes: una consulta de hasta5s por ciclo, máximo cada6h por disco. Consulta ATA sin despertar standby, sin autodetección, self-tests o cambios de configuración. Transportes sin soporte, herramienta ausente, errores y valores desconocidos se informan sin salud inventada. Se descartan seriales, WWN y salida cruda; no se reemiten valores viejos como nuevos. Métricas de antigüedad separadas.
+
+CPUQuota5%, MemoryMax96M y TimeoutStartSec45s de la nueva sonda; cuotas existentes intactas. ProtectSystem=strict, ProtectHome=read-only, sin red IP. La sonda privilegiada ve los montajes de solo lectura y sólo consulta metadatos; Vector conserva ProtectHome=true. Streams propios de 1MiB con dos rotaciones, eventos por cambio o diarios. Identidad comprueba timer, último resultado y heartbeat de almacenamiento; nuevos archivos y unidades incluidos en integridad y reversión. La transacción secundaria no reemplaza el backup principal de actualización.
+
+storage-preflight --host permite validar el namespace nativo en una unidad temporal antes de crear credenciales o instalar. Las pruebas locales/CI no sustituyen esa comprobación y aceptación remota. Pendientes piloto con disco /home separado y métricas de cada volumen; candidata, sin despliegue masivo. Las migraciones anteriores preservan su alcance; sólo rc13 completa suma almacenamiento en upgrade.
+
+## Historial
+
 # 4.0.0-rc13 — candidata: lectura concurrente sin pérdida por clasificación inactiva
 
 Corrige la carrera entre stat y apertura de domlogs: un archivo considerado inactivo recibe presupuesto para bytes que aparezcan antes de abrirlo. Reparte presupuesto con los activos, conserva 8 MiB/ciclo y 2 MiB/archivo y sigue informando cobertura parcial por topes. Sin aumento de CPU, memoria, frecuencia ni volumen de métricas. Pruebas de crecimiento concurrente, reparto con archivos activos y 1.000 dominios sobre presupuesto.

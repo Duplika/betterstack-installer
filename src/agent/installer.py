@@ -180,7 +180,7 @@ def validate_migration(target):
     return old
 
 
-def backup(paths, services):
+def backup(paths, services, set_latest=True):
     directory = STATE / ('backup-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%f'))
     mkdir(directory)
     files = {}
@@ -201,7 +201,8 @@ def backup(paths, services):
         statuses[service] = {'active': active, 'enabled': enabled}
     record = {'files': files, 'services': statuses}
     write(directory / 'transaction.json', identity.canonical(record))
-    write(STATE / 'last-transaction.json', identity.canonical({'path': str(directory / 'transaction.json')}))
+    if set_latest:
+        write(STATE / 'last-transaction.json', identity.canonical({'path': str(directory / 'transaction.json')}))
     return record
 
 
@@ -302,7 +303,75 @@ def migration_files(spec, simplify_context=False):
     return original, active_services
 
 
-def activate(target, caps, config, profile_path, services, oneshots, original_paths, vector, pipeline_variant="observer-v4", migration_review=None):
+def storage_paths():
+    return [CLOUD / 'storage.py', UNITS / 'duplika-storage-observer.service',
+            UNITS / 'duplika-storage-observer.timer']
+
+
+def enable_storage():
+    # Own bounded spool streams match the existing Vector glob; no token/config changes.
+    paths = storage_paths()
+    if any(path.exists() or path.is_symlink() for path in paths):
+        raise RuntimeError('storage:existing_layout_requires_review')
+    if (UNITS / 'duplika-storage-observer.service.d').exists() or (UNITS / 'duplika-storage-observer.timer.d').exists():
+        raise RuntimeError('storage:unreviewed_dropins')
+    transaction = backup(paths, ['duplika-storage-observer.timer', 'duplika-storage-observer.service'], set_latest=False)
+    try:
+        write(paths[0], (HERE / 'storage.py').read_bytes(), 0o700)
+        service = STORAGE_SERVICE.replace('__PYTHON__', sys.executable)
+        write(paths[1], service, 0o644)
+        write(paths[2], STORAGE_TIMER, 0o644)
+        if trusted_executable('restorecon'):
+            execute(['restorecon', '-F', *map(str, paths)])
+        execute(['systemd-analyze', 'verify', str(paths[1]), str(paths[2])])
+        execute(['systemctl', 'daemon-reload'])
+        execute(['systemctl', 'start', 'duplika-storage-observer.service'])
+        health = load(CLOUD_DATA / 'private/storage-health.json')
+        if not 0 <= time.time() - health.get('at', 0) < 180 or health.get('probe_failures') != 0:
+            raise RuntimeError('storage:first_cycle_not_healthy')
+        execute(['systemctl', 'enable', '--now', 'duplika-storage-observer.timer'])
+    except BaseException as error:
+        recover_failure(transaction, error)
+        raise
+    return transaction
+
+
+STORAGE_SERVICE = """[Unit]
+Description=Duplika local volume, MD RAID and bounded SMART metadata
+[Service]
+Type=oneshot
+ExecStart=__PYTHON__ -E -s -B /etc/duplika-betterstack-cloudlinux/storage.py
+UMask=0077
+Nice=15
+IOSchedulingClass=idle
+CPUAccounting=true
+MemoryAccounting=true
+CPUQuota=5%
+MemoryMax=96M
+TimeoutStartSec=45
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ReadWritePaths=/var/lib/duplika-betterstack-cloudlinux/private /var/lib/duplika-betterstack-cloudlinux/spool
+"""
+STORAGE_TIMER = """[Unit]
+Description=Duplika local storage metadata every minute
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=60s
+AccuracySec=2s
+RandomizedDelaySec=5s
+[Install]
+WantedBy=timers.target
+"""
+
+
+def activate(target, caps, config, profile_path, services, oneshots, original_paths, vector, pipeline_variant="observer-v4", migration_review=None, storage_enabled=False):
     python = trusted_executable(sys.executable)
     if not python or not re.fullmatch(r'/[A-Za-z0-9_./-]+', python):
         raise RuntimeError('unsafe_python_interpreter')
@@ -340,6 +409,12 @@ WantedBy=timers.target
     write(UNITS / (NAME + '.timer'), timer, 0o644)
     config_value = load(config)
     identity.destination(config_value, target)
+    storage_transaction = None
+    if storage_enabled:
+        storage_transaction = enable_storage()
+        original_paths = [*original_paths, *storage_paths()]
+        services = [*services, 'duplika-storage-observer.timer']
+        oneshots = [*oneshots, 'duplika-storage-observer.service']
     critical = list(map(str, [*original_paths, *runtime_files(), config, profile_path,
                 UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]))
     critical = sorted(set(critical))
@@ -347,17 +422,24 @@ WantedBy=timers.target
         'target': target, 'capabilities': caps, 'pipeline_variant': pipeline_variant, 'config_path': str(config), 'profile_path': str(profile_path),
         'services': services + [NAME + '.timer'], 'oneshots': oneshots,
         'vector_binary': vector, 'critical_paths': critical, 'baseline': identity.snapshot(critical, str(config))}
-    if migration_review:
-        meta['migration_review'] = migration_review
-    write(BASE / 'manifest.json', identity.canonical(meta))
-    if trusted_executable('restorecon'):
-        execute(['restorecon', '-RF', str(BASE), str(STATE)])
-    execute(['systemd-analyze', 'verify', str(UNITS / (NAME + '.service')), str(UNITS / (NAME + '.timer'))])
-    execute(['systemctl', 'daemon-reload'])
-    execute(['systemctl', 'enable', '--now', NAME + '.timer'])
-    identity.status()  # Local verification; remote delivery has a separate acceptance.
-    write(BASE / 'complete', VERSION + '\n')
-    print('v4 instalada localmente. Recepción remota pendiente; comprobación horaria y publicación ante cambios o diaria.')
+    if storage_enabled:
+        meta['storage_observer'] = True
+    try:
+        if migration_review:
+            meta['migration_review'] = migration_review
+        write(BASE / 'manifest.json', identity.canonical(meta))
+        if trusted_executable('restorecon'):
+            execute(['restorecon', '-RF', str(BASE), str(STATE)])
+        execute(['systemd-analyze', 'verify', str(UNITS / (NAME + '.service')), str(UNITS / (NAME + '.timer'))])
+        execute(['systemctl', 'daemon-reload'])
+        execute(['systemctl', 'enable', '--now', NAME + '.timer'])
+        identity.status()  # Local verification; remote delivery has a separate acceptance.
+        write(BASE / 'complete', VERSION + '\n')
+        print('v4 instalada localmente. Recepción remota pendiente; comprobación horaria y publicación ante cambios o diaria.')
+    except BaseException as error:
+        if storage_transaction is not None:
+            recover_failure(storage_transaction, error)
+        raise
 
 
 def fresh(target, caps, credential):
@@ -406,7 +488,7 @@ def finish_install(target, caps):
         raise RuntimeError('resume:base_changed_review_required')
     activate(target, caps, config, profile,
         ['duplika-betterstack-cloudlinux.service', 'duplika-cloudlinux-observer.timer'],
-        ['duplika-cloudlinux-observer.service'], [Path(p) for p in pending['paths']], load(profile)['vector_binary'])
+        ['duplika-cloudlinux-observer.service'], [Path(p) for p in pending['paths']], load(profile)['vector_binary'], storage_enabled=True)
     write(STATE / 'install-pending.json', identity.canonical({'phase': 'complete', 'target': target}))
 
 
@@ -422,7 +504,8 @@ def validate_v4_upgrade(target, caps):
     previous = old.get('agent_version')
     reviewed_versions = {'4.0.0-rc3': 'upgrade_rc3.json', '4.0.0-rc4': 'upgrade_rc4.json',
                          '4.0.0-rc5': 'upgrade_rc5.json', '4.0.0-rc6': 'upgrade_rc6.json',
-                         '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json'}
+                         '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json',
+                         '4.0.0-rc13': 'upgrade_rc13.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -438,7 +521,7 @@ def validate_v4_upgrade(target, caps):
             or old.get('oneshots') != ['duplika-cloudlinux-observer.service']):
         raise RuntimeError('upgrade:unreviewed_v4_layout')
     reviewed = load(HERE / reviewed_versions[previous])
-    if previous == '4.0.0-rc12':
+    if previous in ('4.0.0-rc12', '4.0.0-rc13'):
         reviewed[NAME + '.service'] = hashlib.sha256(
             reviewed['identity_service_template'].replace('__PYTHON__', sys.executable).encode()).hexdigest()
     for path in runtime_files() + [CLOUD / 'collector.py', UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]:
@@ -446,7 +529,7 @@ def validate_v4_upgrade(target, caps):
             raise RuntimeError('upgrade:unreviewed_v4_runtime')
     if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
         raise RuntimeError('upgrade:v4_drift')
-    if previous == '4.0.0-rc12' and load(CLOUD / 'profile.json').get('agent_version') != previous:
+    if previous in ('4.0.0-rc12', '4.0.0-rc13') and load(CLOUD / 'profile.json').get('agent_version') != previous:
         raise RuntimeError('upgrade:observer_profile_version_mismatch')
     vector = trusted_executable('vector')
     if not vector or Path(old['vector_binary']).resolve() != Path(vector).resolve():
@@ -481,13 +564,16 @@ def upgrade_v4(target, caps):
     identity.status()  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    refresh_observer = old['agent_version'] == '4.0.0-rc12'
+    refresh_observer = old['agent_version'] in ('4.0.0-rc12', '4.0.0-rc13')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
         paths += [CLOUD / 'collector.py', CLOUD / 'profile.json']
         services.append(observer_timer)
-    transaction = backup(paths, services)
+    add_storage = old['agent_version'] == '4.0.0-rc13'
+    if add_storage:
+        paths += storage_paths()
+    transaction = backup(paths, services + (['duplika-storage-observer.timer', 'duplika-storage-observer.service'] if add_storage else []))
     try:
         execute(['systemctl', 'stop', *services])
         if refresh_observer:
@@ -506,7 +592,7 @@ def upgrade_v4(target, caps):
             execute(['systemctl', 'start', observer_timer])
         activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [name for name in old['services'] if name != NAME + '.timer'],
-            old['oneshots'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'], old.get('migration_review'))
+            old['oneshots'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'], old.get('migration_review'), storage_enabled=add_storage)
     except BaseException as error:
         recover_failure(transaction, error)
         raise
@@ -628,7 +714,7 @@ def create_credential(target, path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('operation', choices=['preflight', 'install', 'upgrade', 'verify', 'status', 'rollback', 'resume', 'configure', 'credential'])
+    p.add_argument('operation', choices=['preflight', 'install', 'upgrade', 'verify', 'status', 'rollback', 'resume', 'configure', 'credential', 'storage-preflight'])
     p.add_argument('--target', type=Path, default=Path('/root/perfil.json'))
     p.add_argument('--host')
     p.add_argument('--server-ip')
@@ -651,6 +737,20 @@ def main():
     os.umask(0o077)
     lock = os.open('/run/duplika-betterstack-v4.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if args.operation == 'storage-preflight':
+        if not args.host or args.host not in (socket.gethostname(), socket.getfqdn()):
+            raise RuntimeError('storage:explicit_hostname_mismatch')
+        args_ = ['systemd-run', '--wait', '--pipe', '--collect']
+        for line in STORAGE_SERVICE.splitlines():
+            if '=' in line and line.split('=', 1)[0] not in ('Description', 'Type', 'ExecStart', 'ReadWritePaths'):
+                args_ += ['-p', line]
+        args_ += [sys.executable, '-E', '-s', '-B', str(HERE / 'storage.py'), '--probe']
+        response = run(args_, timeout=60)
+        print(response.stdout)
+        if response.returncode:
+            print(response.stderr[-3000:], file=sys.stderr)
+            raise RuntimeError('storage:native_preflight_failed')
+        return
     if args.operation == 'configure':
         create_configuration(args)
         return
