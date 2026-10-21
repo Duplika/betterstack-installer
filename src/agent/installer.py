@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Unified explicit install/upgrade CLI. Only reviewed layouts can migrate."""
 import argparse
+import contextlib
 import datetime
 import fcntl
 import hashlib
@@ -15,6 +16,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 from capabilities import VERSION, SCHEMA, detect, parse_json, run, trusted_executable, validate_target
 import identity
@@ -420,7 +422,7 @@ def validate_v4_upgrade(target, caps):
     previous = old.get('agent_version')
     reviewed_versions = {'4.0.0-rc3': 'upgrade_rc3.json', '4.0.0-rc4': 'upgrade_rc4.json',
                          '4.0.0-rc5': 'upgrade_rc5.json', '4.0.0-rc6': 'upgrade_rc6.json',
-                         '4.0.0-rc7': 'upgrade_rc7.json'}
+                         '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -436,11 +438,16 @@ def validate_v4_upgrade(target, caps):
             or old.get('oneshots') != ['duplika-cloudlinux-observer.service']):
         raise RuntimeError('upgrade:unreviewed_v4_layout')
     reviewed = load(HERE / reviewed_versions[previous])
+    if previous == '4.0.0-rc12':
+        reviewed[NAME + '.service'] = hashlib.sha256(
+            reviewed['identity_service_template'].replace('__PYTHON__', sys.executable).encode()).hexdigest()
     for path in runtime_files() + [CLOUD / 'collector.py', UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]:
         if hashlib.sha256(identity.read(path)).hexdigest() != reviewed[path.name]:
             raise RuntimeError('upgrade:unreviewed_v4_runtime')
     if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
         raise RuntimeError('upgrade:v4_drift')
+    if previous == '4.0.0-rc12' and load(CLOUD / 'profile.json').get('agent_version') != previous:
+        raise RuntimeError('upgrade:observer_profile_version_mismatch')
     vector = trusted_executable('vector')
     if not vector or Path(old['vector_binary']).resolve() != Path(vector).resolve():
         raise RuntimeError('upgrade:vector_binary_mismatch')
@@ -448,14 +455,55 @@ def validate_v4_upgrade(target, caps):
     return old
 
 
+@contextlib.contextmanager
+def observer_quiet_point(timeout=60):
+    """Wait for the current cycle to finish writing; never kill it midway."""
+    path = CLOUD_DATA / 'private/collector.lock'
+    identity.read(path)  # Existing root-owned regular file and safe parents.
+    fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('upgrade:observer_busy_retry_later')
+                time.sleep(0.1)
+        yield
+    finally:
+        os.close(fd)
+
+
 def upgrade_v4(target, caps):
     old = validate_v4_upgrade(target, caps)
     identity.status()  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    transaction = backup(paths, [NAME + '.timer', NAME + '.service'])
+    refresh_observer = old['agent_version'] == '4.0.0-rc12'
+    observer_timer = 'duplika-cloudlinux-observer.timer'
+    services = [NAME + '.timer', NAME + '.service']
+    if refresh_observer:
+        paths += [CLOUD / 'collector.py', CLOUD / 'profile.json']
+        services.append(observer_timer)
+    transaction = backup(paths, services)
     try:
-        execute(['systemctl', 'stop', NAME + '.timer', NAME + '.service'])
+        execute(['systemctl', 'stop', *services])
+        if refresh_observer:
+            with observer_quiet_point():
+                if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
+                    raise RuntimeError('upgrade:v4_changed_while_waiting')
+                profile = load(CLOUD / 'profile.json')
+                if profile.get('agent_version') != old['agent_version']:
+                    raise RuntimeError('upgrade:observer_profile_version_mismatch')
+                write(CLOUD / 'collector.py', (HERE / 'collector.py').read_bytes(), 0o700)
+                profile['agent_version'] = VERSION
+                write(CLOUD / 'profile.json', identity.canonical(profile))
+                if trusted_executable('restorecon'):
+                    execute(['restorecon', '-F', str(CLOUD / 'collector.py'), str(CLOUD / 'profile.json')])
+            # The timer starts the new collector; transport is never stopped.
+            execute(['systemctl', 'start', observer_timer])
         activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [name for name in old['services'] if name != NAME + '.timer'],
             old['oneshots'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'], old.get('migration_review'))

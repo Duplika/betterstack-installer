@@ -466,7 +466,10 @@ def collect_access(out, state, domains, profile):
     remaining = sum(backlog for _, _, backlog in candidates)
     for path, site, backlog in candidates:
         try:
-            allowance = min(MAX_FILE_BYTES, budget // remaining) if backlog and remaining else 0
+            # A file classified as idle can grow before open/fstat. Reserve a
+            # share for that race instead of skipping its new bytes with zero.
+            shares = max(1, remaining + (not backlog))
+            allowance = min(MAX_FILE_BYTES, budget // shares)
             if backlog:
                 remaining -= 1
             lines, position, quality = read_tail(path, old.get(str(path)), allowance)

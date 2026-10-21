@@ -13,6 +13,48 @@ LINE = b'127.0.0.1 - - [21/Oct/2026:00:00:00 +0000] "GET / HTTP/1.1" 200 1\n'
 
 
 class ScaleTests(unittest.TestCase):
+    def test_file_growing_after_discovery_keeps_new_requests(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); path = root / 'example.net'; path.write_bytes(b'')
+            domains = {'example.net': 'account'}; state = {}
+            profile = dict(PROFILE, domlog_roots=[folder])
+            collector.collect_access(collector.Output(PROFILE, state), state, domains, profile)
+            original = collector.read_tail
+            def grows(path, previous, allowance):
+                path.write_bytes(LINE * 4)
+                return original(path, previous, allowance)
+            state['access_at'] -= 60
+            out = collector.Output(PROFILE, state)
+            with patch.object(collector, 'read_tail', side_effect=grows):
+                coverage = collector.collect_access(out, state, domains, profile)
+            self.assertEqual(coverage['bytes_read'], len(LINE) * 4)
+            self.assertEqual(coverage['skipped_bytes'], 0)
+            metric = next(row for row in out.metrics if row['name'] == 'duplika_site_requests_per_second')
+            self.assertAlmostEqual(metric['gauge']['value'] * 60, 4, delta=.01)
+
+    def test_racing_idle_file_does_not_take_all_budget_from_busy_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); idle = root / 'a.example.net'; busy = root / 'z.example.net'
+            idle.write_bytes(b''); busy.write_bytes(b'')
+            domains = {'a.example.net': 'account', 'z.example.net': 'other'}; state = {}
+            profile = dict(PROFILE, domlog_roots=[folder])
+            collector.collect_access(collector.Output(PROFILE, state), state, domains, profile)
+            busy.write_bytes(LINE * 20); state['access_round_robin'] = 0
+            original = collector.read_tail
+            def grows(path, previous, allowance):
+                if path == idle:
+                    path.write_bytes(LINE * 20)
+                return original(path, previous, allowance)
+            out = collector.Output(PROFILE, state)
+            with patch.object(collector, 'read_tail', side_effect=grows), patch.object(
+                    collector, 'MAX_CYCLE_BYTES', len(LINE) * 20):
+                coverage = collector.collect_access(out, state, domains, profile)
+            self.assertLessEqual(coverage['bytes_read'], len(LINE) * 20)
+            self.assertGreater(coverage['skipped_bytes'], 0)
+            observed = {row['tags']['site'] for row in out.metrics
+                        if row['name'] == 'duplika_site_requests_per_second' and row['gauge']['value'] > 0}
+            self.assertEqual(observed, set(domains))
+
     def test_cloudlinux8_shared_requires_real_capability_probe(self):
         import subprocess
         with tempfile.TemporaryDirectory() as folder:

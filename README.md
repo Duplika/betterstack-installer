@@ -2,7 +2,7 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 8 y 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc12 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc13 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 **No usar rc8:** se conserva como artefacto histórico; su escritura de permisos y reversión tienen fallos corregidos en rc9.
 
@@ -20,12 +20,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc12/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc13/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc12/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc13/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -107,3 +107,10 @@ La opción retira el lector cPanel, su servicio/timer y su entrada en Vector; de
 ## Recuperación acotada rc11
 
 Si una alta nueva rc11 quedó detenida por timeout LVE, rc12 admite `preflight --recover-partial --target PERFIL.json` y luego `resume --recover-partial --target PERFIL.json`. No repetir credential/install ni borrar estado. Requiere archivos oficiales rc11, configuración de transporte intacta, destino/capacidades iguales, unidades detenidas y deshabilitadas (oneshot estático), evidencia local del timeout y ausencia de identidad/base completas. Rechaza otros errores, cambios de código, unidades/drop-ins y layouts desconocidos. Hace backup y reversión; conserva token, spool y cursores. Sólo tras superar las pruebas nativas y el primer ciclo habilita los servicios y termina identidad. No es reparación universal.
+
+
+## Actualización revisada desde rc12
+
+rc13 corrige la lectura de un domlog que crece entre descubrirlo y abrirlo. También asigna presupuesto a esos archivos inicialmente inactivos; conserva los topes de 8 MiB por ciclo y 2 MiB por archivo y la señal de cobertura parcial al superarlos.
+
+`preflight` y `upgrade` reconocen la base completa observer-v4 rc12 mediante hashes oficiales, mismo destino/capacidades y baseline intacta. La actualización espera un punto seguro con el lock del recolector, cambia su código y versión del perfil, y reanuda el timer. Conserva Vector activo, su configuración, credencial, unidades, spool y cursores. Si el ciclo no libera el lock en 60 segundos, aborta y restaura el estado anterior. Se requiere aceptación remota posterior; no es una actualización masiva ni una reparación de layouts desconocidos.

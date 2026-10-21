@@ -11,7 +11,7 @@ import re
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENT = ('capabilities.py', 'collector.py', 'config.py', 'health.py', 'identity.py', 'install_base.py', 'installer.py', 'context_cleanup.py', 'partial_recovery.py', 'recovery_rc11.json', 'upgrade_rc3.json', 'upgrade_rc4.json', 'upgrade_rc5.json', 'upgrade_rc6.json', 'upgrade_rc7.json')
+AGENT = ('capabilities.py', 'collector.py', 'config.py', 'health.py', 'identity.py', 'install_base.py', 'installer.py', 'context_cleanup.py', 'partial_recovery.py', 'recovery_rc11.json', 'upgrade_rc3.json', 'upgrade_rc4.json', 'upgrade_rc5.json', 'upgrade_rc6.json', 'upgrade_rc7.json', 'upgrade_rc12.json')
 LEGACY = ('legacy_identity.py', 'legacy_cloud_config.py', 'legacy_cloud_collector.py',
           'legacy_alma_profile.py', 'legacy_alma_acl.py', 'legacy_context_reference.py',
           'legacy_context_acl.py', 'legacy_context_reader.py')

@@ -1,3 +1,13 @@
+# 4.0.0-rc13 — candidata: lectura concurrente sin pérdida por clasificación inactiva
+
+Corrige la carrera entre stat y apertura de domlogs: un archivo considerado inactivo recibe presupuesto para bytes que aparezcan antes de abrirlo. Reparte presupuesto con los activos, conserva 8 MiB/ciclo y 2 MiB/archivo y sigue informando cobertura parcial por topes. Sin aumento de CPU, memoria, frecuencia ni volumen de métricas. Pruebas de crecimiento concurrente, reparto con archivos activos y 1.000 dominios sobre presupuesto.
+
+Agrega actualización revisada de la base completa observer-v4 rc12. Exige runtime oficial, perfil y unidad de identidad reconocidos, destino/capacidades iguales, baseline intacta y servicios saludables. Backup y reversión. Pausa timers, espera el lock de un ciclo en curso (máximo60s), comprueba nuevamente baseline, reemplaza recolector/perfil y reanuda timer/identidad. Conserva Vector activo, configuración, credencial, unidades de observador, estado, spool y buffers. No detiene el colector durante sus escrituras. Espera LVE40s y servicio55s continúan.
+
+117 pruebas locales (el caso de otro uid/gid se ejecuta en CI), incluidas migración rc12 y reversión con conservación de datos, rechazo de drift/runtime desconocido y espera acotada del lock. Vector/configuración no cambian; las pruebas nativas se conservan. Pendiente actualización real y aceptación remota; continúa candidata.
+
+## Historial
+
 # 4.0.0-rc12 — candidata: espera LVE y recuperación parcial revisada
 
 Eleva la espera LVE de15a40s y TimeoutStartSec del recolector de50a55s. Mantiene CPUQuota10%, MemoryMax256M, frecuencia60s, detalle de dominios, LVE y Governor. No interpreta timeout como consumo cero ni aumenta recursos para resolverlo. Configuración de Vector intacta.

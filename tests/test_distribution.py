@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 import tempfile
 import types
+import sys
 import unittest
 from unittest.mock import patch
 import installer
@@ -138,7 +139,10 @@ class CandidateUpgradeTests(unittest.TestCase):
         activate=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='activate')
         for node in activate.body:
             if isinstance(node,ast.Assign) and isinstance(node.targets[0],ast.Name) and node.targets[0].id in ('service','timer'):
-                (installer.UNITS/(installer.NAME+'.'+node.targets[0].id)).write_text(ast.literal_eval(node.value))
+                value = node.value
+                template = ast.literal_eval(value.func.value if isinstance(value, ast.Call) else value)
+                (installer.UNITS/(installer.NAME+'.'+node.targets[0].id)).write_text(
+                    template.replace('__PYTHON__', sys.executable))
         for path in installer.observer_base_paths():
             if not path.exists():path.write_text('{}')
         (installer.CLOUD/'vector.json').write_text(json.dumps(__import__('config').make_config(TARGET,'TEST_SECRET',TARGET['ingesting_host'])))
@@ -214,6 +218,63 @@ class Rc6UpgradeTests(CandidateUpgradeTests):
 
 class Rc7UpgradeTests(CandidateUpgradeTests):
     previous_version='4.0.0-rc7'
+
+class Rc12UpgradeTests(CandidateUpgradeTests):
+    previous_version = '4.0.0-rc12'
+
+    def setUp(self):
+        super().setUp()
+        data = self.root / 'observer-data'; data.mkdir()
+        private = data / 'private'; private.mkdir()
+        (private / 'collector.lock').write_bytes(b'')
+        (private / 'state.json').write_bytes(b'{"offset":987654}')
+        self.stack.enter_context(patch.object(installer, 'CLOUD_DATA', data))
+        (installer.CLOUD / 'profile.json').write_text(json.dumps({'agent_version': self.previous_version}))
+        self.meta['baseline'] = identity.snapshot(self.meta['critical_paths'], self.meta['config_path'])
+        self.save_meta()
+
+    def test_reviewed_rc3_upgrade_preserves_transport_and_state(self):
+        paths = [p for p in installer.observer_base_paths() if p.name not in ('collector.py', 'profile.json')]
+        paths += [installer.CLOUD_DATA / 'private/state.json']
+        before = {p:p.read_bytes() for p in paths}
+        old_collector = (installer.CLOUD / 'collector.py').read_bytes()
+        installer.upgrade(TARGET, self.caps)
+        self.assertEqual(before, {p:p.read_bytes() for p in paths})
+        self.assertNotEqual(old_collector, (installer.CLOUD / 'collector.py').read_bytes())
+        self.assertEqual((installer.CLOUD / 'collector.py').read_bytes(), (installer.HERE / 'collector.py').read_bytes())
+        self.assertEqual(installer.load(installer.CLOUD / 'profile.json')['agent_version'], capabilities.VERSION)
+        commands = [call.args[0] for call in self.execute.call_args_list]
+        self.assertIn(['systemctl','start','duplika-cloudlinux-observer.timer'], commands)
+        self.assertFalse(any('duplika-betterstack-cloudlinux.service' in command for command in commands))
+        self.assertFalse(any('duplika-cloudlinux-observer.service' in command for command in commands))
+
+    def test_failed_activation_restores_old_runtime(self):
+        before = {p:p.read_bytes() for p in installer.observer_base_paths()+installer.runtime_files()+[
+            installer.BASE/'manifest.json', installer.BASE/'complete', installer.CLOUD_DATA/'private/state.json']}
+        self.status.side_effect = [{}, RuntimeError('failed verification')]
+        with self.assertRaisesRegex(RuntimeError, 'failed verification'):
+            installer.upgrade(TARGET,self.caps)
+        self.assertEqual(before, {p:p.read_bytes() for p in before})
+
+    def test_busy_observer_does_not_overwrite_collector(self):
+        before = (installer.CLOUD / 'collector.py').read_bytes()
+        import contextlib
+        @contextlib.contextmanager
+        def busy():
+            raise RuntimeError('observer_busy')
+            yield
+        with patch.object(installer,'observer_quiet_point',busy):
+            with self.assertRaisesRegex(RuntimeError,'observer_busy'):
+                installer.upgrade(TARGET,self.caps)
+        self.assertEqual(before,(installer.CLOUD/'collector.py').read_bytes())
+
+    def test_quiet_point_times_out_without_writes(self):
+        before = (installer.CLOUD_DATA/'private/state.json').read_bytes()
+        with patch.object(installer.fcntl,'flock',side_effect=BlockingIOError):
+            with self.assertRaisesRegex(RuntimeError,'observer_busy_retry_later'):
+                with installer.observer_quiet_point(timeout=0):
+                    self.fail('must not enter while busy')
+        self.assertEqual(before,(installer.CLOUD_DATA/'private/state.json').read_bytes())
 
 class IdentityDeliveryTests(unittest.TestCase):
     def setUp(self):
