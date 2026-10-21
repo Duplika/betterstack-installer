@@ -280,10 +280,11 @@ def observer_base_paths():
 
 
 def validate_v4_upgrade(target, caps):
-    """Only reviewed, complete rc3/rc4 observer layouts can receive this fix."""
+    """Only reviewed, complete rc3/rc4/rc5 observer layouts can receive this fix."""
     old = load(BASE / 'manifest.json')
     previous = old.get('agent_version')
-    reviewed_versions = {'4.0.0-rc3': 'upgrade_rc3.json', '4.0.0-rc4': 'upgrade_rc4.json'}
+    reviewed_versions = {'4.0.0-rc3': 'upgrade_rc3.json', '4.0.0-rc4': 'upgrade_rc4.json',
+                         '4.0.0-rc5': 'upgrade_rc5.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')

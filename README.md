@@ -2,26 +2,26 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 9 con cPanel**.
 
-**4.0.0-rc5 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc6 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 ## Qué detecta
 
 - Sistema y edición CloudLinux; Solo continúa sin LVE, sin inventar ceros.
 - LVE funcional en ediciones que lo soportan; un fallo inesperado se informa.
 - Métricas de host, procesos/cuentas y tráfico agregado.
-- Estado de KernelCare y aviso de reinicio, si están disponibles las herramientas. Un kernel parcheado no descarta reinicios por otros componentes.
+- Recomendación de reinicio por actualizaciones: sí, no o desconocido, mediante needs-restarting -r. No consulta KernelCare ni clasifica urgencia.
 - WordPress opcional por sitio, con vencimiento y resúmenes de errores sin texto crudo.
 
 El código público no contiene perfiles reales, fuentes de clientes, tokens ni inventarios. Las referencias legacy son código genérico conservado para comprobar migraciones; no son instaladores independientes.
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc5/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc6/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc5/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc6/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -59,13 +59,13 @@ bash /root/installer.sh upgrade --target /root/perfil.json
 bash /root/installer.sh verify
 ```
 
-Migra instalaciones v3 reconocidas y completas, o una instalación nueva observer-v4 de rc3 o rc4 con código revisado, sin drift y con servicios sanos. La actualización rc3/rc4 → rc5 sólo reemplaza la capa de identidad/mantenimiento; conserva el recolector, su perfil, Vector y sus unidades de transporte. Conserva fuente, credenciales, offsets, buffers y pipelines existentes. Las variantes AlmaLinux conservan su pipeline anterior y las extensiones existentes. No convierte cualquier instalación Vector en una instalación administrada.
+Migra instalaciones v3 reconocidas y completas, o una instalación nueva observer-v4 de rc3, rc4 o rc5 con código revisado, sin drift y con servicios sanos. La actualización rc3/rc4/rc5 → rc6 sólo reemplaza la capa de identidad/mantenimiento; conserva el recolector, su perfil, Vector y sus unidades de transporte. Conserva fuente, credenciales, offsets, buffers y pipelines existentes. Las variantes AlmaLinux conservan su pipeline anterior y las extensiones existentes. No convierte cualquier instalación Vector en una instalación administrada.
 
 `rollback` restaura la última transacción de upgrade sin retroceder checkpoints. `resume` sólo finaliza v4 si una instalación nueva dejó la base completa y su snapshot coincide; no repara estados parciales desconocidos. Migraciones entre versiones v4 distintas necesitan revisión específica.
 
 ## Operación liviana
 
-Métricas principales cada minuto, resúmenes normales cada cinco minutos, eventos relevantes ante cambios y mantenimiento/identidad cada hora. Inventario diario compacto. Hashes sólo de código y configuración del monitor, sin token, no de logs de clientes. No se relee el binario Vector completo cada hora.
+Métricas principales cada minuto, resúmenes normales cada cinco minutos, eventos relevantes ante cambios y comprobación de mantenimiento/identidad cada hora. La identidad se envía inicialmente, ante cambios y como inventario diario compacto; no se reenvía cada hora si no cambia. Hashes sólo de código y configuración del monitor, sin token, no de logs de clientes. No se relee el binario Vector completo cada hora.
 
 Límites de lectura, spool, buffers, CPU y memoria. Los topes de lectura pueden reducir cobertura en sitios de mucho tráfico y se informan; no se afirma ahorro de recursos sin medir ventanas comparables.
 

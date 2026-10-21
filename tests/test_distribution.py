@@ -182,4 +182,69 @@ class CandidateUpgradeTests(unittest.TestCase):
 class Rc4UpgradeTests(CandidateUpgradeTests):
     previous_version='4.0.0-rc4'
 
+class Rc5UpgradeTests(CandidateUpgradeTests):
+    previous_version='4.0.0-rc5'
+
+class IdentityDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        import contextlib
+        import config
+        self.stack=contextlib.ExitStack();self.addCleanup(self.stack.close)
+        root=Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir='/root')))
+        self.stack.enter_context(patch.object(identity,'BASE',root))
+        self.stack.enter_context(patch.object(identity,'STATE',root))
+        config_path=root/'vector.json'
+        config_path.write_text(json.dumps(config.make_config(TARGET,'TEST_SECRET',TARGET['ingesting_host'])))
+        meta={'target':TARGET,'critical_paths':[],'baseline':{},'config_path':str(config_path),
+            'services':['fixture.timer'],'vector_binary':'/usr/bin/vector','capabilities':{'os_id':'cloudlinux'},
+            'installer_version':capabilities.VERSION,'agent_version':capabilities.VERSION,'pipeline_variant':'observer-v4'}
+        (root/'manifest.json').write_text(json.dumps(meta))
+        self.last=root/'last-send.json'
+        self.clock=self.stack.enter_context(patch.object(identity.time,'time',return_value=1000000))
+        self.stack.enter_context(patch.object(identity.health,'run',return_value=types.SimpleNamespace(returncode=0,stdout='vector fixture')))
+        self.probe=self.stack.enter_context(patch.object(identity.health,'observe',return_value={
+            'reboot_recommended':False,'reboot_status':'not_indicated','reason':'needs_restarting_no_hint','reboot_probe_exit_code':0}))
+        self.send=self.stack.enter_context(patch.object(identity,'send'))
+        self.output=self.stack.enter_context(patch('builtins.print'))
+
+    def test_initial_change_recovery_and_daily_delivery_without_hourly_writes(self):
+        identity.status(publish=True)
+        self.assertEqual(self.send.call_count,1)
+        before=self.last.read_bytes();stamp=self.last.stat().st_mtime_ns
+        self.clock.return_value+=3600
+        identity.status(publish=True)
+        self.assertEqual(self.send.call_count,1)
+        self.assertEqual(self.last.read_bytes(),before)
+        self.assertEqual(self.last.stat().st_mtime_ns,stamp)
+        self.probe.return_value={'reboot_recommended':True,'reboot_status':'indicated',
+            'reason':'updates_since_boot','reboot_probe_exit_code':1}
+        identity.status(publish=True)
+        self.assertEqual(self.send.call_count,2)
+        self.probe.return_value={'reboot_recommended':None,'reboot_status':'unknown','reason':'reboot_probe_failed'}
+        identity.status(publish=True)
+        self.assertEqual(self.send.call_count,3)
+        self.probe.return_value={'reboot_recommended':False,'reboot_status':'not_indicated',
+            'reason':'needs_restarting_no_hint','reboot_probe_exit_code':0}
+        identity.status(publish=True)
+        self.assertEqual(self.send.call_count,4)
+        self.clock.return_value=1000000+86400
+        identity.status(publish=True)
+        self.assertEqual(self.send.call_count,5)
+        self.assertTrue(self.send.call_args.args[2]['inventory_daily'])
+
+    def test_failed_delivery_preserves_state_and_is_retried(self):
+        identity.status(publish=True);before=self.last.read_bytes()
+        self.probe.return_value={'reboot_recommended':None,'reboot_status':'unknown','reason':'reboot_probe_failed'}
+        self.send.side_effect=RuntimeError('identity_delivery_unconfirmed')
+        with self.assertRaisesRegex(RuntimeError,'delivery_unconfirmed'):identity.status(publish=True)
+        self.assertEqual(self.last.read_bytes(),before)
+        self.send.side_effect=None
+        identity.status(publish=True)
+        self.assertEqual(self.send.call_count,3)
+
+    def test_manual_verification_never_sends_or_creates_delivery_state(self):
+        identity.status()
+        self.send.assert_not_called()
+        self.assertFalse(self.last.exists())
+
 if __name__=='__main__':unittest.main()

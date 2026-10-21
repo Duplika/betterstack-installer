@@ -136,16 +136,24 @@ def status(publish=False):
         'release_channel': 'candidate', 'remote_acceptance': 'external_evidence_required'}
     old = json.loads(read(STATE / 'last-send.json')) if (STATE / 'last-send.json').exists() else {}
     digest = hashlib.sha256(canonical(hashes)).hexdigest()
+    stable = {key: value for key, value in event.items() if key != 'dt'}
+    stable['integrity_digest'] = digest
+    status_digest = hashlib.sha256(canonical(stable)).hexdigest()
     if digest != old.get('integrity_digest'):
         event['integrity_digest'] = digest
     # Daily explicit inventory is small; no online update/catalog polling on servers.
     if time.time() - old.get('inventory_at', 0) >= 86400:
         event['inventory_daily'] = True
-    if publish:
+    due = status_digest != old.get('status_digest') or event.get('inventory_daily', False)
+    if publish and due:
         send(uri, token, event)
         atomic(STATE / 'last-send.json', {'integrity_digest': digest,
+               'status_digest': status_digest,
                'inventory_at': time.time() if event.get('inventory_daily') else old.get('inventory_at', 0)})
-    print(json.dumps(event, indent=2))
+    if publish and not due:
+        print('Identidad sin cambios; próximo envío ante cambios o inventario diario.')
+    else:
+        print(json.dumps(event, indent=2))
     if drift or not all(services.values()):
         raise RuntimeError('integrity_or_service_failure')
     return event

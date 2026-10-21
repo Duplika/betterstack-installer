@@ -62,6 +62,11 @@ class MaintenanceTests(unittest.TestCase):
             folder=Path(next(arg.split('=',2)[2] for arg in args if arg.startswith('--setopt=logdir=')))
             observed.append(folder)
             self.assertEqual(folder.stat().st_mode & 0o777,0o700)
+            for option,name in (('cachedir','cache'),('persistdir','state')):
+                directory=Path(next(arg.split('=',2)[2] for arg in args if arg.startswith('--setopt='+option+'=')))
+                self.assertEqual(directory,folder.parent/name)
+                self.assertEqual(directory.stat().st_mode & 0o777,0o700)
+            (folder.parent/'cache'/'metadata_lock.pid').write_text('lock')
             self.assertIn('--cacheonly',args)
             self.assertIn('--setopt=logfilelevel=0',args)
             self.assertIn('--setopt=log_size=64k',args)
@@ -72,6 +77,7 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(answer['reboot_status'],'indicated')
         self.assertTrue(observed)
         self.assertFalse(observed[0].exists())
+        self.assertFalse(observed[0].parent.exists())
         self.assertNotIn('private diagnostic',json.dumps(answer))
 
     def test_reboot_logs_are_removed_when_probe_raises(self):
@@ -90,20 +96,29 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(answer['reboot_status'],'unknown')
         self.assertEqual(answer['reason'],'reboot_probe_failed')
 
-    def observe(self,kc=None,reboot=None):
-        def finder(name):return '/usr/bin/'+name if (name=='kcarectl' and kc is not None) or (name=='needs-restarting' and reboot is not None) else None
-        def runner(args):
-            if '--status' in args:return result(code=kc)
-            if '--uname' in args:return result('5.14.0-example.x86_64')
-            return result('Reboot required' if reboot==1 else '',reboot)
-        return health.observe(runner,finder)
-    def test_kernelcare_does_not_hide_generic_reboot_hint(self):
-        p=self.observe(0,1);self.assertEqual(p['priority'],'review');self.assertEqual(p['reboot_status'],'indicated');self.assertFalse(p['urgency_verified'])
-    def test_absent_kernelcare_is_not_urgent(self):self.assertEqual(self.observe(None,0)['priority'],'none')
-    def test_pending_patches_are_not_automatic_reboot(self):
-        for code in (1,2,3):
-            p=self.observe(code,0);self.assertEqual(p['priority'],'attention');self.assertEqual(p['reboot_status'],'not_indicated')
-    def test_unknown_does_not_mean_healthy(self):self.assertEqual(self.observe(99,2)['reboot_status'],'unknown')
+    def test_three_reboot_states_and_no_kernelcare_calls(self):
+        for code,out,expected in ((0,'No core libraries updated',False),
+                                  (1,'Core libraries updated: kernel',True),
+                                  (2,'',None),(1,'',None),(0,'',None)):
+            with self.subTest(code=code,out=out):
+                def finder(name):
+                    self.assertEqual(name,'needs-restarting')
+                    return '/usr/bin/needs-restarting'
+                answer=health.observe(lambda args:result(out,code),finder)
+                self.assertIs(answer['reboot_recommended'],expected)
+                self.assertNotIn('kernelcare',answer)
+
+    def test_missing_probe_is_unknown(self):
+        answer=health.observe(lambda args:None,lambda name:None)
+        self.assertIsNone(answer['reboot_recommended'])
+        self.assertEqual(answer['reason'],'reboot_probe_unavailable')
+
+    def test_errors_with_stdout_are_not_reboot_recommendations(self):
+        for code in (0,1):
+            answer=health.observe(lambda args:result('partial output',code,'command error'),
+                lambda name:'/usr/bin/needs-restarting')
+            self.assertIsNone(answer['reboot_recommended'])
+            self.assertEqual(answer['reason'],'reboot_probe_failed')
 
 class CollectorTests(unittest.TestCase):
     def test_solo_no_lve_command_or_fake_zero(self):

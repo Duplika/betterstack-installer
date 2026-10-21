@@ -17,9 +17,15 @@ Agregar al perfil una lista `wordpress` explícita, máximo 10 sitios, con `user
 
 Se leen al final y después incrementalmente `error_log` y `wp-content/debug.log` ya existentes. Se envían conteos por categoría, sin texto crudo. Presupuesto global de 1 MiB por ciclo; rechaza symlinks/rutas redirigidas y deja de leer al vencer. No activa debug, instala plugins ni ejecuta WordPress. El bind de lectura del docroot permanece hasta ajustar la configuración del servicio, aunque la recolección haya vencido.
 
-## KernelCare y reinicios
+## Recomendación de reinicio
 
-Se consulta estado y kernel efectivo. La sonda DNF usa --cacheonly y logs auxiliares en un temporal privado bajo /tmp (PrivateTmp en el servicio), con nivel mínimo, rotación de 64 KiB y un archivo de respaldo por log. Se eliminan al terminar, también si falla la sonda. No se habilitan escrituras en /var/log ni se modifica dnf.conf. Un aviso genérico de `needs-restarting -r` requiere revisión de componentes incluso con KernelCare actualizado. Falta de KernelCare no implica urgencia; un fallo de sonda no equivale a salud. El agente no conoce por sí solo todas las CVE ni su exposición y reporta `urgency_verified=false`.
+Una vez por hora se ejecuta needs-restarting -r. Se informa maintenance.reboot_recommended=true y reboot_status=indicated si recomienda reiniciar por actualizaciones; false/not_indicated si no hay indicación; null/unknown si falta la herramienta, falla o produce salida de error. Es una recomendación para planificar un reinicio manual, no una clasificación de urgencia ni una comprobación de todas las vulnerabilidades.
+
+No se ejecuta kcarectl, consulta KernelCare, modifica su caché/configuración ni habilita escritura en sus rutas. No se calculan prioridades según live patching. Los campos KernelCare/urgencia de candidatas anteriores se retiran.
+
+DNF se ejecuta con --cacheonly y rutas separadas de log, caché y estado dentro de un temporal 0700 bajo /tmp (PrivateTmp en el servicio). Esto permite crear el lock de metadatos sin escribir en las rutas reales de DNF. Logs auxiliares a nivel mínimo, rotación 64 KiB y un respaldo por archivo; temporales eliminados también ante fallo. No se cambia dnf.conf ni se sincronizan repositorios. Esta combinación se probó bajo el servicio protegido en EL9.
+
+La identidad completa se envía inicialmente, ante cambios de estado/integridad/versión/servicios y cada 24 horas. No se envía ni reescribe last-send.json en ciclos horarios sin cambios. Los fallos de entrega conservan el estado anterior y se reintentan en el siguiente ciclo. Las métricas y el heartbeat del recolector continúan cada minuto. La ausencia de una identidad horaria no implica un agente detenido: comprobar el heartbeat reciente y los servicios.
 
 ## Límites
 
@@ -27,4 +33,4 @@ EL9 con cPanel únicamente. Los nombres históricos de unidades/directorios Clou
 
 Domlogs: presupuesto 8 MiB por ciclo y 2 MiB por archivo. Se informa pérdida de cobertura por topes/rotaciones/formato. Los buffers y spool son acotados. Procesos breves pueden escapar al muestreo de un minuto; consumo por usuario no equivale siempre a atribución exacta por dominio.
 
-Migraciones v3: conservar pipelines, ACL y extensiones existentes. rc5 admite además una migración específica de instalaciones nuevas observer-v4 rc3 y rc4: exige marcador completo, destino y capacidades iguales, hashes oficiales de los tres helpers, recolector y unidades de identidad, snapshot sin drift y servicios sanos. Respalda la capa de identidad y revierte si falla la activación; no modifica perfiles, Vector, recolector, checkpoints ni buffers. Otras versiones/layouts v4 requieren revisión explícita. `resume` se limita a terminar identidad sobre una base nueva ya completa y sin cambios; no repara una base incompleta.
+Migraciones v3: conservar pipelines, ACL y extensiones existentes. rc6 admite además una migración específica de instalaciones nuevas observer-v4 rc3, rc4 y rc5: exige marcador completo, destino y capacidades iguales, hashes oficiales de los tres helpers, recolector y unidades de identidad, snapshot sin drift y servicios sanos. Respalda la capa de identidad y revierte si falla la activación; no modifica perfiles, Vector, recolector, checkpoints ni buffers. Otras versiones/layouts v4 requieren revisión explícita. `resume` se limita a terminar identidad sobre una base nueva ya completa y sin cambios; no repara una base incompleta.

@@ -1,4 +1,16 @@
-# 4.0.0-rc5 — candidata pública
+# 4.0.0-rc6 — candidata: recomendación simple de reinicio
+
+Simplifica mantenimiento a reboot_recommended (true/false/null), reboot_status (indicated/not_indicated/unknown), motivo y código de salida de la sonda. Usa needs-restarting -r una vez por hora para planificar mantenimiento manual. No clasifica urgencia ni consulta KernelCare, su estado de parches, red, logs o caché. No se amplían permisos del servicio.
+
+Corrige el lock de metadatos DNF bajo ProtectSystem=strict mediante directorios temporales separados para logs, caché y estado, además de --cacheonly. El ensayo nativo EL9 mostró el aviso de reinicio válido con stderr vacío bajo las mismas restricciones. Los temporales se eliminan al finalizar o fallar; no se cambia dnf.conf ni se escriben rutas globales de DNF.
+
+La identidad se publica inicialmente, ante cambios y diariamente. Los ciclos horarios sin cambios no generan envío ni escritura del estado de publicación. Un fallo HTTP no avanza el estado y se reintenta. Se conservan las métricas y heartbeats del recolector cada minuto.
+
+57 pruebas, incluidas tres versiones históricas de upgrade/reversión, estados sí/no/desconocido, errores con stdout, limpieza de logs/locks/estado y publicación inicial/cambio/recuperación/diaria sin escrituras horarias. El transporte y la configuración Vector no cambian. Falta instalar la candidata y aceptar la nueva identidad remota.
+
+## Historial
+
+### 4.0.0-rc5 — candidata pública
 
 Corrige la consulta de reinicio bajo ProtectSystem=strict. DNF intenta abrir logs incluso para needs-restarting -r; la sonda ahora redirige exclusivamente sus logs auxiliares a un directorio temporal privado con permisos 0700, nivel mínimo, rotación de 64 KiB y un respaldo por log. Se elimina al finalizar o fallar. --cacheonly evita sincronizar repositorios. No se cambia dnf.conf ni se amplían permisos del servicio o se habilita escritura en /var/log.
 
