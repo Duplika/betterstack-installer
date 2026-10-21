@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import socket
 import subprocess
 import sys
@@ -265,6 +266,40 @@ def runtime_files():
     return [BASE / name for name in ('identity.py', 'health.py', 'capabilities.py')]
 
 
+def unit_files(name):
+    properties = execute(['systemctl', 'show', name, '-p', 'FragmentPath', '-p', 'DropInPaths']).stdout
+    values = dict(line.split('=', 1) for line in properties.splitlines() if '=' in line)
+    fragment = values.get('FragmentPath', '')
+    if not fragment or not Path(fragment).is_absolute():
+        raise RuntimeError('upgrade:unit_fragment_missing:' + name)
+    paths = [Path(fragment), *map(Path, shlex.split(values.get('DropInPaths', '')))]
+    resolved = []
+    for path in paths:
+        if not path.is_absolute():
+            raise RuntimeError('upgrade:unit_path_invalid:' + name)
+        path = path.resolve()
+        identity.read(path)
+        resolved.append(path)
+    return resolved
+
+
+def migration_files(spec, simplify_context=False):
+    removed = context_cleanup.paths(UNITS) if simplify_context else []
+    original = [Path(p) for p in spec['runtime_files'] if not str(p).startswith(str(LEGACY))
+                and not str(p).endswith('duplika-betterstack-identity.service')
+                and not str(p).endswith('duplika-betterstack-identity.timer')]
+    active_services = [name for name in spec['services']
+                       if not (simplify_context and name == 'duplika-vector-context.timer')]
+    for name in active_services:
+        original.extend(unit_files(name))
+        if name.endswith('.timer'):
+            original.extend(unit_files(name[:-6] + '.service'))
+    original = sorted(set(path for path in original if path not in removed))
+    for path in original:
+        identity.read(path)
+    return original, active_services
+
+
 def activate(target, caps, config, profile_path, services, oneshots, original_paths, vector, pipeline_variant="observer-v4", migration_review=None):
     python = trusted_executable(sys.executable)
     if not python or not re.fullmatch(r'/[A-Za-z0-9_./-]+', python):
@@ -469,6 +504,9 @@ def upgrade(target, caps, simplify_context=False):
             raise RuntimeError('upgrade:wordpress_requires_separate_reviewed_sandbox_change')
         paths += [CLOUD / 'collector.py', profile_path]
         services += ['duplika-cloudlinux-observer.timer', 'duplika-cloudlinux-observer.service']
+    # Resolve effective vendor/local units and drop-ins while the reviewed old
+    # pipeline is still running. Never discover missing paths after stopping it.
+    original, active_services = migration_files(spec, simplify_context)
     transaction = backup(paths, services)
     try:
         execute(['systemctl', 'disable', '--now', 'duplika-betterstack-identity.timer'])
@@ -493,19 +531,9 @@ def upgrade(target, caps, simplify_context=False):
             write(CLOUD / 'collector.py', (HERE / 'collector.py').read_bytes(), 0o700)
             execute(['systemctl', 'start', 'duplika-cloudlinux-observer.service'], timeout=60)
             execute(['systemctl', 'start', 'duplika-cloudlinux-observer.timer'])
-        original = [Path(p) for p in spec['runtime_files'] if not str(p).startswith(str(LEGACY))
-                    and not str(p).endswith('duplika-betterstack-identity.service')
-                    and not str(p).endswith('duplika-betterstack-identity.timer')]
-        for name in spec['services']:
-            original.append(UNITS / name)
-            if name.endswith('.timer'):
-                original.append(UNITS / (name[:-6] + '.service'))
-        active_services = list(spec['services'])
         variant = 'observer-v4' if cloud else spec['base_variant']
         review = old.get('migration_review')
         if simplify_context:
-            original = [path for path in original if path not in cleanup_paths]
-            active_services.remove('duplika-vector-context.timer')
             variant = 'almalinux-wordpress-minimal-v4'
             review = dict(review or {}, context_cleanup={'cpanel_reader': 'removed', 'routine_cron': 'removed',
                           'relay_and_checkpoints': 'preserved'})
@@ -599,7 +627,9 @@ def main():
                 validate_v4_upgrade(target, caps)
             identity.status()
         if LEGACY.exists() and not (BASE / 'complete').exists():
-            previous = validate_migration(target)['spec']['base_variant']
+            reviewed = validate_migration(target)
+            previous = reviewed['spec']['base_variant']
+            migration_files(reviewed['spec'], args.simplify_context)
             if args.simplify_context:
                 if previous != 'almalinux-wordpress-context-r6':
                     raise RuntimeError('cleanup:requires_reviewed_context_v3')

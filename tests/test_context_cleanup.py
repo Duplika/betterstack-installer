@@ -105,6 +105,12 @@ class CleanupTransactionTests(unittest.TestCase):
                  'duplika-vector-context.timer', 'duplika-vector-context.service']
         for name in names:
             (installer.UNITS / name).write_text('reviewed unit ' + name)
+        vendor = self.root / 'vendor'; vendor.mkdir()
+        self.vendor_unit = vendor / 'vector.service'
+        (installer.UNITS / 'vector.service').replace(self.vendor_unit)
+        self.dropin = installer.UNITS / '30-journal.conf'; self.dropin.write_text('reviewed drop-in')
+        self.stack.enter_context(patch.object(installer, 'unit_files', side_effect=lambda name:
+            [self.vendor_unit, self.dropin] if name == 'vector.service' else [installer.UNITS / name]))
         spec = {'base_variant': 'almalinux-wordpress-context-r6', 'config': str(self.config),
                 'profile': str(self.profile), 'runtime_files': [str(self.helper)],
                 'vector_service': 'vector.service',
@@ -132,6 +138,9 @@ class CleanupTransactionTests(unittest.TestCase):
         self.assertEqual(meta['pipeline_variant'], 'almalinux-wordpress-minimal-v4')
         self.assertNotIn('duplika-vector-context.timer', meta['services'])
         self.assertNotIn(str(self.helper), meta['critical_paths'])
+        self.assertIn(str(self.vendor_unit), meta['critical_paths'])
+        self.assertIn(str(self.dropin), meta['critical_paths'])
+        self.assertNotIn(str(installer.UNITS / 'vector.service'), meta['critical_paths'])
         unit = (installer.UNITS / (installer.NAME + '.service')).read_text()
         self.assertIn('ExecStart=' + sys.executable + ' -E -s -B ', unit)
         self.assertEqual(self.checkpoint.read_text(), 'keep position')
@@ -156,6 +165,14 @@ class CleanupTransactionTests(unittest.TestCase):
             installer.upgrade(TARGET, self.caps, simplify_context=True)
         self.execute.assert_not_called()
         self.assertFalse((installer.STATE / 'last-transaction.json').exists())
+
+    def test_missing_unit_detected_before_backup_or_service_changes(self):
+        with patch.object(installer, 'unit_files', side_effect=FileNotFoundError('vendor unit')):
+            with self.assertRaises(FileNotFoundError):
+                installer.upgrade(TARGET, self.caps, simplify_context=True)
+        self.execute.assert_not_called()
+        self.assertFalse((installer.STATE / 'last-transaction.json').exists())
+        self.assertTrue(self.helper.exists())
 
     def test_cleanup_not_implicitly_applied_and_wrong_variant_rejected(self):
         self.old['spec']['base_variant'] = 'almalinux-wordpress-v2'

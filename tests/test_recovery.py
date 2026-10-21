@@ -126,5 +126,26 @@ class RestoreTests(unittest.TestCase):
                 installer.execute(['systemctl', 'start', 'vector.service'])
 
 
+class UnitLocationTests(unittest.TestCase):
+    def test_vendor_fragment_and_local_dropin_are_both_verified(self):
+        with tempfile.TemporaryDirectory(dir='/root') as directory:
+            root = Path(directory)
+            vendor = root / 'vendor.service'; vendor.write_text('vendor')
+            dropin = root / '30-local.conf'; dropin.write_text('drop-in')
+            props = 'FragmentPath=' + str(vendor) + '\nDropInPaths=' + str(dropin) + '\n'
+            with patch.object(installer, 'execute', return_value=result(props)):
+                self.assertEqual(installer.unit_files('vector.service'), [vendor, dropin])
+            vendor.unlink()
+            with patch.object(installer, 'execute', return_value=result(props)):
+                with self.assertRaises(FileNotFoundError):
+                    installer.unit_files('vector.service')
+
+    def test_unknown_or_relative_fragment_rejected(self):
+        for props in ('FragmentPath=\n', 'FragmentPath=relative.service\n'):
+            with patch.object(installer, 'execute', return_value=result(props)):
+                with self.assertRaisesRegex(RuntimeError, 'unit_fragment_missing'):
+                    installer.unit_files('vector.service')
+
+
 if __name__ == '__main__':
     unittest.main()

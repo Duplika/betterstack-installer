@@ -1,3 +1,13 @@
+# 4.0.0-rc10 — candidata: unidades del paquete y drop-ins efectivos
+
+Corrige la migración v3: no presupone que todas las unidades están en /etc/systemd/system. Consulta FragmentPath y DropInPaths a systemd, verifica archivos efectivos y los incorpora a la identidad. Conserva unidades vendor, locales y drop-ins; no copia ni reemplaza unidades del paquete.
+
+La lista completa se comprueba en preflight y antes de crear respaldo o detener servicios durante upgrade. Excluye del nuevo manifiesto los archivos del lector retirado por --simplify-context. Se conservan correcciones rc9 de permisos umask077, reversión completa y validación como usuario vector.
+
+95 pruebas Python, incluida transacción completa con vector.service en directorio vendor, drop-in local, ausencia de archivo efectiva detectada antes de cambiar servicios y casos de recuperación. Configuración Vector sin cambios respecto rc8/rc9; CI conserva las 30 pruebas nativas. Falta aceptación nativa/remota; continúa candidata.
+
+## Historial
+
 # 4.0.0-rc9 — candidata: permisos y recuperación completa
 
 Corrige write: aplica fchmod al descriptor después de fchown y antes de reemplazar el archivo. El modo solicitado ya no depende de umask 077; un archivo 0640 permanece legible por su grupo. Reversión restaura contenido/uid/gid/modo explícitamente y aplica restorecon por política si está disponible.

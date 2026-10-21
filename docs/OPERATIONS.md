@@ -54,3 +54,8 @@ Retira contexto cPanel y eventos programados rutinarios de cron. Se conservan er
 No usar rc8 para instalar, actualizar ni revertir. Su umask 077 puede reducir 0640 a 0600 y bloquear lectura del transporte; su restore puede abortar ante unidades nuevas ausentes. rc9 corrige ambos y puede completar la misma transacción privada con rollback. El operador debe verificar hostname/fuente y la procedencia del respaldo. La reversión puede reiniciar Vector para recuperar el estado previo. Después comprobar preflight antes de volver a migrar. No borrar last-transaction.json ni respaldos para sortear controles.
 
 rc9 intenta todos los reinicios previamente activos aunque falle otro y sólo después restaura enablement. Una unidad ausente antes y después no se habilita/deshabilita. Verifica servicios y reporta errores acumulados con el fallo original. Restorecon aplica política SELinux a los archivos recuperados; no desactiva SELinux ni abre permisos de otras rutas.
+
+
+## Ubicación efectiva de unidades
+
+rc10 obtiene FragmentPath/DropInPaths mediante systemctl show para cada servicio/timer conservado. Verifica todos los archivos durante preflight y antes de mutar el legado. La identidad registra las rutas reales, incluidas unidades de proveedor y drop-ins locales. No crear /etc/systemd/system/vector.service como atajo: debe conservarse la unidad del paquete.

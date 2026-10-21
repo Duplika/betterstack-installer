@@ -6,7 +6,7 @@ import re
 import shutil
 import subprocess
 
-VERSION = '4.0.0-rc9'
+VERSION = '4.0.0-rc10'
 SCHEMA = 1
 MAX_OUTPUT = 8 * 1024 * 1024
 
