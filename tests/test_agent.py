@@ -241,11 +241,11 @@ class VectorPackageTests(unittest.TestCase):
         self.listing=str(self.binary)+'\t'+self.digest+'\n/var/lib/vector\t\n'
         self.running=self.binary.stat()
         self.stack.enter_context(patch.object(installer,'trusted_executable',side_effect=lambda name:str(self.binary) if name=='vector' else '/usr/bin/rpm'))
-        original_stat=installer.os.stat
+        original_stat=Path.stat
         def stat(path,*args,**kwargs):
             if str(path)=='/proc/123/exe':return self.running
             return original_stat(path,*args,**kwargs)
-        self.stack.enter_context(patch.object(installer.os,'stat',side_effect=stat))
+        self.stack.enter_context(patch.object(Path,'stat',new=stat))
         def execute(args):
             if args[0]=='systemctl':return result('123\n')
             self.assertEqual(args[:3],['/usr/bin/rpm','-qf','--qf'])
