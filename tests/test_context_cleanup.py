@@ -2,6 +2,7 @@ import contextlib
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -119,6 +120,8 @@ class CleanupTransactionTests(unittest.TestCase):
         self.caps = {'os_id': 'almalinux', 'os_version': '8.10'}
         self.checkpoint = self.root / 'journal-cursor'; self.checkpoint.write_text('keep position')
         self.relay = self.root / 'context.jsonl'; self.relay.write_text('keep history')
+        previous_umask = os.umask(0o077)
+        self.addCleanup(os.umask, previous_umask)
 
     def test_explicit_cleanup_and_selected_runtime(self):
         installer.upgrade(TARGET, self.caps, simplify_context=True)

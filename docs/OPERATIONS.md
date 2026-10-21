@@ -47,3 +47,10 @@ Es una comprobación puntual de migración y no agrega lectura horaria del binar
 --simplify-context es opcional y sólo admite preflight/upgrade sobre la base v3 reconocida. Preflight no aplica cambios; ejecuta pruebas Vector y validación sin entorno/red usando un archivo temporal privado con la credencial existente. Upgrade repite la revisión, respalda configuración y los tres archivos del lector, detiene su timer/servicio, detiene Vector, cambia el pipeline y arranca Vector. Luego activa la nueva identidad. Cualquier fallo de la transacción restaura configuración, modo, uid/gid y estado previo de servicios. No borra data_dir, posiciones, relay ni estado de origen; no toca instrumentación SQL externa.
 
 Retira contexto cPanel y eventos programados rutinarios de cron. Se conservan errores PHP/LiteSpeed/WooCommerce, métricas y journal de servicios/kernel/crashes. El auxiliar ACL se conserva porque mantiene lectura de logs tras rotaciones. No bajar controles de drift ni ignorar un servicio de recolección fallido para migrar. El estado fallido de la identidad v3 se investiga con preflight; no se considera resuelto sólo por elegir otro intérprete.
+
+
+## Recuperación de un intento rc8 fallido
+
+No usar rc8 para instalar, actualizar ni revertir. Su umask 077 puede reducir 0640 a 0600 y bloquear lectura del transporte; su restore puede abortar ante unidades nuevas ausentes. rc9 corrige ambos y puede completar la misma transacción privada con rollback. El operador debe verificar hostname/fuente y la procedencia del respaldo. La reversión puede reiniciar Vector para recuperar el estado previo. Después comprobar preflight antes de volver a migrar. No borrar last-transaction.json ni respaldos para sortear controles.
+
+rc9 intenta todos los reinicios previamente activos aunque falle otro y sólo después restaura enablement. Una unidad ausente antes y después no se habilita/deshabilita. Verifica servicios y reporta errores acumulados con el fallo original. Restorecon aplica política SELinux a los archivos recuperados; no desactiva SELinux ni abre permisos de otras rutas.

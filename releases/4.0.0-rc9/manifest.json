@@ -1,0 +1,31 @@
+{
+  "version": "4.0.0-rc9",
+  "channel": "candidate",
+  "contains_credentials": false,
+  "remote_verified": false,
+  "installer_sha256": "831e59081d54ab25d40aeed528cb352fb23355d8e2ccad0353e41636143f2547",
+  "payload_sha256": "2e0c6dc76a4f5398073250d76d2d4f7825cd83a54b064305ab7412f7dacb6dd9",
+  "files": {
+    "capabilities.py": "5cc4976d9fce86a26c3f8cbe72ab49cf1eecdc6c4f9d001292082d6f85a89dd6",
+    "collector.py": "f772e34ef08aba3af48386ccf0b501e7311690d0918ac65d457dce35ff8d9693",
+    "config.py": "eed4b0d7534cc9a7904f85f1222f52d345d8b4350301dd6671d55c38dd0c56bc",
+    "context_cleanup.py": "007bdecab65562d9a504b6de403e2f87b77442e757d513447050cb06f498c0ae",
+    "health.py": "24310ae2193b3299179cddcde1aa1cbe0e7c8c83609620c3918c98a7c5ada623",
+    "identity.py": "6b647beea11665878ebcef4d51e451211eca05c6672c55863a7e953a22271000",
+    "install_base.py": "c184688b32059c75348140a067c03a9b0cfc1a22d2fc0fa0da7d8610a5dd4021",
+    "installer.py": "604c4bfee60c94d4a80b578f7769a124c725f8b4b0e770187776b854f8db1273",
+    "legacy_alma_acl.py": "cb576bf12e278b2390567eba7f3fc857cbdf03c455e14fbe4c51060efb03eb79",
+    "legacy_alma_profile.py": "db5baf003bc3e84974536e202b285355d0d1f2d6d25f1e6943d7c54dac8b0096",
+    "legacy_cloud_collector.py": "4e021208d7b9c325ca85d21250f1d1d1e98df3d2f526d2d746a31975fa2bcb40",
+    "legacy_cloud_config.py": "eed4b0d7534cc9a7904f85f1222f52d345d8b4350301dd6671d55c38dd0c56bc",
+    "legacy_context_acl.py": "1185cff3a9eb6f6d20b8ddc347a17e5592ffc101a0f0383d86f5e89c804940e4",
+    "legacy_context_reader.py": "581d53530145a7a979557846bfa6c3b1957950331e463b5ba30cc9983950b2cc",
+    "legacy_context_reference.py": "bacdcbdeb1eec79f5e14c929f94902d0654bc9360e838fffc4220e1e1cb10a2d",
+    "legacy_identity.py": "7093a3d34b253d67d6d1004a9ea93d54088a9129050e1ac804c537f81f0f10f1",
+    "upgrade_rc3.json": "14a354ed178136a25307436269619083f79d6b9c5cf543184a392d96253b55eb",
+    "upgrade_rc4.json": "857a209d073dfe734d6cbc9c22bc3d9dab564a2fd7fd2cc2fd86e9f067496b3e",
+    "upgrade_rc5.json": "e1ed6cf808e588669fb04a8974311a45e58f16356b5e4aa3a5156bef4a9bfb48",
+    "upgrade_rc6.json": "636918dece9dd3253b305f483fc3bb4f88dbb2f9e16e1fa6c789aa714d22e879",
+    "upgrade_rc7.json": "ebfbd1056b97964151698ffc4c9904e4a5e431a93ba63bce515cee55905b9b6b"
+  }
+}

@@ -47,6 +47,9 @@ def write(path, data, mode=0o600):
             if path.exists():
                 previous = path.stat()
                 os.fchown(f.fileno(), previous.st_uid, previous.st_gid)
+            # os.open's mode is masked by the installer's mandatory umask 077.
+            # Set the requested final mode explicitly, after ownership changes.
+            os.fchmod(f.fileno(), mode)
             f.write(data if isinstance(data, bytes) else data.encode()); f.flush(); os.fsync(f.fileno())
         os.replace(temp, path)
     finally:
@@ -64,7 +67,13 @@ def mkdir(path):
 def execute(args, timeout=120):
     p = run(args, timeout=timeout)
     if p.returncode:
-        raise RuntimeError('step_failed:' + Path(args[0]).name + ':exit=' + str(p.returncode))
+        step = Path(args[0]).name
+        if step == 'systemctl':
+            # Only fixed operations/unit names, never command output or secrets.
+            operation = args[1] if args[1] in ('start', 'stop', 'enable', 'disable', 'daemon-reload') else 'command'
+            units = [arg for arg in args[2:] if re.fullmatch(r'[A-Za-z0-9_.@-]+\.(?:service|timer)', arg)]
+            step += ':' + operation + (':' + ','.join(units) if units else '')
+        raise RuntimeError('step_failed:' + step + ':exit=' + str(p.returncode))
     return p
 
 
@@ -194,19 +203,62 @@ def backup(paths, services):
 
 
 def restore(record):
+    errors = []
+    def attempt(args):
+        try:
+            execute(args)
+        except Exception as error:
+            errors.append(str(error))
     for service in record['services']:
-        run(['systemctl', 'stop', service])
+        try:
+            run(['systemctl', 'stop', service])
+        except Exception:
+            errors.append('restore_stop_failed:' + service)
     for path, item in record['files'].items():
-        if item:
-            write(path, identity.read(item['file']), item['mode'])
-            os.chown(path, item.get('uid', 0), item.get('gid', 0))
-        else:
-            Path(path).unlink(missing_ok=True)
-    execute(['systemctl', 'daemon-reload'])
+        try:
+            if item:
+                write(path, identity.read(item['file']), item['mode'])
+                os.chown(path, item.get('uid', 0), item.get('gid', 0))
+                Path(path).chmod(item['mode'])
+            else:
+                Path(path).unlink(missing_ok=True)
+        except Exception:
+            errors.append('restore_file_failed:' + Path(path).name)
+    restored = [path for path, item in record['files'].items() if item and Path(path).exists()]
+    if restored and trusted_executable('restorecon'):
+        attempt(['restorecon', '-F', *restored])
+    attempt(['systemctl', 'daemon-reload'])
+    # Recover previously running services before touching enablement. A missing
+    # new timer or another error must never prevent restarting the transport.
     for service, status in record['services'].items():
-        execute(['systemctl', 'enable' if status['enabled'] else 'disable', service])
         if status['active']:
-            execute(['systemctl', 'start', service])
+            attempt(['systemctl', 'start', service])
+    for service, status in record['services'].items():
+        try:
+            loaded = run(['systemctl', 'show', service, '-p', 'LoadState', '--value'])
+            if loaded.stdout.strip() == 'not-found':
+                if status['active'] or status['enabled']:
+                    errors.append('restore_unit_missing:' + service)
+                continue
+            attempt(['systemctl', 'enable' if status['enabled'] else 'disable', service])
+        except Exception:
+            errors.append('restore_unit_state_failed:' + service)
+    for service, status in record['services'].items():
+        if status['active']:
+            try:
+                if run(['systemctl', 'is-active', '--quiet', service]).returncode:
+                    errors.append('restore_service_inactive:' + service)
+            except Exception:
+                errors.append('restore_service_check_failed:' + service)
+    if errors:
+        raise RuntimeError('rollback_incomplete:' + ';'.join(errors))
+
+
+def recover_failure(record, original):
+    try:
+        restore(record)
+    except Exception as rollback_error:
+        raise RuntimeError(str(original) + '; ' + str(rollback_error)) from None
 
 
 def runtime_files():
@@ -372,8 +424,8 @@ def upgrade_v4(target, caps):
         activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [name for name in old['services'] if name != NAME + '.timer'],
             old['oneshots'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'], old.get('migration_review'))
-    except BaseException:
-        restore(transaction)
+    except BaseException as error:
+        recover_failure(transaction, error)
         raise
 
 
@@ -426,6 +478,10 @@ def upgrade(target, caps, simplify_context=False):
             execute(['systemctl', 'stop', 'duplika-vector-context.service'])
             execute(['systemctl', 'stop', spec['vector_service']])
             write(config, identity.canonical(candidate), config.stat().st_mode & 0o777)
+            if trusted_executable('restorecon'):
+                execute(['restorecon', '-F', str(config)])
+            execute(['runuser', '-u', 'vector', '--', 'test', '-r', str(config)])
+            execute(['runuser', '-u', 'vector', '--', vector, 'validate', '--no-environment', '--config-json', str(config)])
             for path in cleanup_paths:
                 path.unlink()
             execute(['systemctl', 'daemon-reload'])
@@ -455,8 +511,8 @@ def upgrade(target, caps, simplify_context=False):
                           'relay_and_checkpoints': 'preserved'})
         activate(target, caps, config, profile_path, active_services,
                  [name[:-6] + '.service' for name in active_services if name.endswith('.timer')], original, vector, variant, review)
-    except BaseException:
-        restore(transaction)
+    except BaseException as error:
+        recover_failure(transaction, error)
         raise
 
 

@@ -1,3 +1,15 @@
+# 4.0.0-rc9 — candidata: permisos y recuperación completa
+
+Corrige write: aplica fchmod al descriptor después de fchown y antes de reemplazar el archivo. El modo solicitado ya no depende de umask 077; un archivo 0640 permanece legible por su grupo. Reversión restaura contenido/uid/gid/modo explícitamente y aplica restorecon por política si está disponible.
+
+La reversión intenta recuperar todos los servicios previamente activos antes de restaurar enablement. Omite unidades nuevas ausentes si antes no estaban activas/habilitadas. Continúa ante fallos independientes, comprueba servicios recuperados y reporta errores acumulados; conserva el error original si también falla rollback. Los errores systemctl identifican operación y unidad sin copiar stdout/stderr ni credenciales.
+
+La reducción context-r6 prueba lectura y validación de la configuración final como vector antes de arrancar el transporte. Para un intento rc8 fallido, utilizar rollback de rc9 para completar restauración; luego preflight y upgrade revisados. Nunca repetir rollback/upgrade de rc8. Se preservan sus artefactos sin modificación.
+
+Validación: 92 pruebas Python (una requiere otro uid/gid y se ejerce en CI), incluidos modo 0600/0640/0644/0700 con umask 077, transacción completa con esa máscara, unidades ausentes, errores independientes, servicio inactivo y conservación de errores originales. Se conservan las 30 pruebas nativas Vector 0.60.0 y las migraciones revisadas. Falta la aceptación nativa/remota de rc9; continúa candidata.
+
+## Historial
+
 # 4.0.0-rc8 — candidata: AlmaLinux 8 y contexto opcional
 
 Bootstrap con selección explícita de Python 3.9–3.12 instalado; identidad y altas nuevas usan ese mismo intérprete. No modifica Python del sistema ni instala otro. Detecta AlmaLinux 8 para migraciones v3 revisadas. Las altas EL8 y CloudLinux 8 siguen bloqueadas hasta su revisión propia.
