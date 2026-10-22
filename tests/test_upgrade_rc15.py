@@ -19,6 +19,7 @@ TARGET = {'host': 'cloud.example.net', 'server_ip': '203.0.113.20', 'source_id':
 
 
 class UpgradeTests(unittest.TestCase):
+    previous_version = "4.0.0-rc15"
     def setUp(self):
         self.stack = contextlib.ExitStack(); self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory(dir='/root')))
@@ -28,7 +29,7 @@ class UpgradeTests(unittest.TestCase):
                             ('STATE', 'state'), ('CLOUD_DATA', 'data')]:
             self.stack.enter_context(patch.object(i, key, self.root / folder))
         self.stack.enter_context(patch.object(identity, 'BASE', i.BASE))
-        script = (Path(__file__).parents[1] / 'releases/4.0.0-rc15/installer.sh').read_text()
+        script = (Path(__file__).parents[1] / ('releases/' + self.previous_version + '/installer.sh')).read_text()
         encoded = script.split("<<'DUPLIKA_4_PAYLOAD'\n", 1)[1].split('DUPLIKA_4_PAYLOAD', 1)[0]
         with tarfile.open(fileobj=io.BytesIO(base64.b64decode(encoded)), mode='r:gz') as archive:
             files = {m.name: archive.extractfile(m).read() for m in archive}
@@ -36,8 +37,8 @@ class UpgradeTests(unittest.TestCase):
         (i.CLOUD / 'collector.py').write_bytes(files['collector.py'])
         (i.CLOUD / 'storage.py').write_bytes(files['storage.py'])
         (i.CLOUD / 'vector.json').write_text(json.dumps(config.make_config(TARGET, 'TEST_SECRET', TARGET['ingesting_host'])))
-        (i.CLOUD / 'profile.json').write_text(json.dumps({'agent_version': '4.0.0-rc15'}))
-        proof = json.loads((i.HERE / 'upgrade_rc15.json').read_text())
+        (i.CLOUD / 'profile.json').write_text(json.dumps({'agent_version': self.previous_version}))
+        proof = json.loads((i.HERE / ('upgrade_' + self.previous_version.split('-')[1] + '.json')).read_text())
         (i.UNITS / (i.NAME + '.service')).write_text(proof['identity_service_template'].replace('__PYTHON__', i.sys.executable))
         timer = '[Unit]\nDescription=Duplika v4 hourly maintenance and version identity\n[Timer]\nOnBootSec=2min\nOnUnitActiveSec=1h\nRandomizedDelaySec=120\nAccuracySec=30s\n[Install]\nWantedBy=timers.target\n'
         (i.UNITS / (i.NAME + '.timer')).write_text(timer)
@@ -52,7 +53,7 @@ class UpgradeTests(unittest.TestCase):
         self.vector = self.root / 'vector'; self.vector.write_text('package binary')
         paths = sorted(set(map(str, i.observer_base_paths() + i.runtime_files() +
             [i.UNITS / (i.NAME + '.service'), i.UNITS / (i.NAME + '.timer')] + i.storage_paths())))
-        self.meta = {'agent_version': '4.0.0-rc15', 'installer_version': '4.0.0-rc15',
+        self.meta = {'agent_version': self.previous_version, 'installer_version': self.previous_version,
             'target': TARGET, 'capabilities': {}, 'configuration_schema': i.SCHEMA, 'pipeline_variant': 'observer-v4',
             'config_path': str(i.CLOUD / 'vector.json'), 'profile_path': str(i.CLOUD / 'profile.json'),
             'critical_paths': paths, 'services': ['duplika-betterstack-cloudlinux.service',
@@ -60,12 +61,12 @@ class UpgradeTests(unittest.TestCase):
             'oneshots': ['duplika-cloudlinux-observer.service', 'duplika-storage-observer.service'],
             'storage_observer': True, 'vector_binary': str(self.vector),
             'baseline': identity.snapshot(paths, str(i.CLOUD / 'vector.json'))}
-        (i.BASE / 'manifest.json').write_text(json.dumps(self.meta)); (i.BASE / 'complete').write_text('4.0.0-rc15\n')
+        (i.BASE / 'manifest.json').write_text(json.dumps(self.meta)); (i.BASE / 'complete').write_text(self.previous_version+'\n')
         self.stack.enter_context(patch.object(i, 'run', return_value=__import__('subprocess').CompletedProcess([], 0, 'inactive', '')))
         self.stack.enter_context(patch.object(i, 'trusted_executable', side_effect=lambda name: str(self.vector) if name == 'vector' else None))
 
     def test_original_payload_validates_and_storage_hashes_are_verified(self):
-        self.assertEqual(i.validate_v4_upgrade(TARGET, {})['agent_version'], '4.0.0-rc15')
+        self.assertEqual(i.validate_v4_upgrade(TARGET, {})['agent_version'], self.previous_version)
         (i.CLOUD / 'storage.py').write_text('changed')
         with self.assertRaisesRegex(RuntimeError, 'unreviewed_v4_runtime'): i.validate_v4_upgrade(TARGET, {})
 
@@ -103,3 +104,7 @@ class UpgradeTests(unittest.TestCase):
              patch.object(i, 'activate') as activate:
             with self.assertRaisesRegex(RuntimeError, 'probe failed'): i.upgrade_v4(TARGET, {})
         recover.assert_called_once(); activate.assert_not_called()
+
+
+class Rc17UpgradeTests(UpgradeTests):
+    previous_version = "4.0.0-rc17"

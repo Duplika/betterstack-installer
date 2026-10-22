@@ -1,3 +1,11 @@
+# Procedimiento actual rc18
+
+Tras descarga fijada y hash verificado: `preflight`, `upgrade`, `verify`. El destino instalado se detecta automáticamente; un perfil explícito sigue validándose si se suministra. No hace falta solicitar token otra vez, reinstalar, borrar spool/offsets ni iniciar identidad manualmente. Si ya está actualizado, verifica salud/código/capacidades y no cambia archivos.
+
+Aceptar cada servidor mediante identidad remota y dos muestras de recursos espaciadas, con continuidad de accesos y almacenamiento según su layout. Una primera recepción puede registrarse como inicial con límites explícitos; no equivale a cadencia prolongada. Medir ahorro antes/después sólo en pilotos/cambios de comportamiento. No comparar tráfico usando muestras parciales como si fueran exactas.
+
+No borrar/recrear fuentes para limpiar historial: cambiaría credenciales y referencias. Este instalador no cambia retención ni borra datos remotos. Los pipelines AlmaLinux heredados mantienen sus métricas existentes y lectores, sin agregar un segundo agente ni forzar capacidades CloudLinux.
+
 # Operación
 
 ## Aceptación
@@ -6,8 +14,8 @@
 2. Instalación con pruebas y validación nativas de Vector bajo permisos reales.
 3. Verificación local de servicios, identidad e integridad.
 4. Consultar en Better Stack una identidad reciente del hostname y fuente esperados.
-5. Comprobar al menos dos ciclos nuevos de métricas y los nombres esperados según capacidades.
-6. Comparar ventanas completas de cobertura, CPU del colector, RSS, duración, eventos y bytes JSON almacenados. Para métricas contar muestras mediante `sum(metrics_count)`, no filas agregadas.
+5. En el recolector común, comprobar dos muestras nuevas de procesos y, si corresponde, LVE separadas aproximadamente300s, sin reemisión intermedia, más continuidad de accesos/almacenamiento y edades/fallos. En pipelines heredados comprobar las métricas y lectores propios, sin exigir LVE inexistente.
+6. En pilotos o cambios del agente, comparar ventanas completas iguales de cobertura, CPU del colector, RSS, duración, eventos y bytes JSON almacenados. En actualizaciones repetidas de la misma política basta la comprobación de salud/cadencia/continuidad. Para métricas contar muestras mediante `sum(metrics_count)`, no filas agregadas.
 
 No inferir versión de una fuente activa o del volumen. No representar LVE ausente, Governor deshabilitado o cobertura incompleta como cero consumo. `metrics_delivery_verified=false` es intencional: la identidad no consulta recepción.
 

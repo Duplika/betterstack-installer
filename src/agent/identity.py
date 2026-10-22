@@ -94,7 +94,7 @@ def atomic(path, obj):
         temporary.unlink(missing_ok=True)
 
 
-def status(publish=False):
+def status(publish=False, quiet=False):
     meta = json.loads(read(BASE / 'manifest.json'))
     hashes = snapshot(meta['critical_paths'], meta['config_path'])
     drift = hashes != meta['baseline']
@@ -167,7 +167,9 @@ def status(publish=False):
         atomic(STATE / 'last-send.json', {'integrity_digest': digest,
                'status_digest': status_digest,
                'inventory_at': time.time() if event.get('inventory_daily') else old.get('inventory_at', 0)})
-    if publish and not due:
+    if quiet:
+        pass
+    elif publish and not due:
         print('Identidad sin cambios; próximo envío ante cambios o inventario diario.')
     else:
         print(json.dumps(event, indent=2))

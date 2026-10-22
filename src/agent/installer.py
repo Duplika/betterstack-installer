@@ -437,9 +437,8 @@ WantedBy=timers.target
         execute(['systemd-analyze', 'verify', str(UNITS / (NAME + '.service')), str(UNITS / (NAME + '.timer'))])
         execute(['systemctl', 'daemon-reload'])
         execute(['systemctl', 'enable', '--now', NAME + '.timer'])
-        identity.status()  # Local verification; remote delivery has a separate acceptance.
+        identity.status(quiet=True)  # Local verification; remote delivery has a separate acceptance.
         write(BASE / 'complete', VERSION + '\n')
-        print('v4 instalada localmente. Recepción remota pendiente; comprobación horaria y publicación ante cambios o diaria.')
     except BaseException as error:
         if storage_transaction is not None:
             recover_failure(storage_transaction, error)
@@ -554,14 +553,25 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions = {'4.0.0-rc3': 'upgrade_rc3.json', '4.0.0-rc4': 'upgrade_rc4.json',
                          '4.0.0-rc5': 'upgrade_rc5.json', '4.0.0-rc6': 'upgrade_rc6.json',
                          '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json',
-                         '4.0.0-rc13': 'upgrade_rc13.json', '4.0.0-rc15': 'upgrade_rc15.json'}
+                         '4.0.0-rc13': 'upgrade_rc13.json', '4.0.0-rc15': 'upgrade_rc15.json',
+                         '4.0.0-rc10': 'upgrade_rc10.json', '4.0.0-rc17': 'upgrade_rc17.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
     if old.get('target') != target or old.get('capabilities') != caps:
         raise RuntimeError('upgrade:target_or_capabilities_changed')
+    reviewed = load(HERE / reviewed_versions[previous])
+    if 'identity_service_template' in reviewed:
+        reviewed[NAME + '.service'] = hashlib.sha256(
+            reviewed['identity_service_template'].replace('__PYTHON__', sys.executable).encode()).hexdigest()
+    for path in runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]:
+        if hashlib.sha256(identity.read(path)).hexdigest() != reviewed[path.name]:
+            raise RuntimeError('upgrade:unreviewed_v4_runtime')
+    if old.get('pipeline_variant') != 'observer-v4':
+        import legacy_upgrade
+        return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    had_storage = previous == '4.0.0-rc15'
+    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -573,19 +583,15 @@ def validate_v4_upgrade(target, caps):
             or old.get('oneshots') != ['duplika-cloudlinux-observer.service', *(['duplika-storage-observer.service'] if had_storage else [])]
             or bool(old.get('storage_observer')) != had_storage):
         raise RuntimeError('upgrade:unreviewed_v4_layout')
-    reviewed = load(HERE / reviewed_versions[previous])
-    if previous in ('4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15'):
-        reviewed[NAME + '.service'] = hashlib.sha256(
-            reviewed['identity_service_template'].replace('__PYTHON__', sys.executable).encode()).hexdigest()
     if had_storage:
         reviewed['duplika-storage-observer.service'] = hashlib.sha256(STORAGE_SERVICE.replace('__PYTHON__', sys.executable).encode()).hexdigest()
         reviewed['duplika-storage-observer.timer'] = hashlib.sha256(STORAGE_TIMER.encode()).hexdigest()
-    for path in runtime_files() + [CLOUD / 'collector.py', UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')] + (storage_paths() if had_storage else []):
+    for path in [CLOUD / 'collector.py'] + (storage_paths() if had_storage else []):
         if hashlib.sha256(identity.read(path)).hexdigest() != reviewed[path.name]:
             raise RuntimeError('upgrade:unreviewed_v4_runtime')
     if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
         raise RuntimeError('upgrade:v4_drift')
-    if previous in ('4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15') and load(CLOUD / 'profile.json').get('agent_version') != previous:
+    if previous in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17') and load(CLOUD / 'profile.json').get('agent_version') != previous:
         raise RuntimeError('upgrade:observer_profile_version_mismatch')
     vector = trusted_executable('vector')
     if not vector or Path(old['vector_binary']).resolve() != Path(vector).resolve():
@@ -647,16 +653,16 @@ def verify_new_observer_cycle(started_after):
 
 def upgrade_v4(target, caps):
     old = validate_v4_upgrade(target, caps)
-    identity.status()  # Must be healthy before any write or service change.
+    identity.status(quiet=True)  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    refresh_observer = old['agent_version'] in ('4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15')
+    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
         paths += [CLOUD / 'collector.py', CLOUD / 'profile.json']
         services.append(observer_timer)
-    add_storage = old['agent_version'] == '4.0.0-rc13'
+    add_storage = refresh_observer and not old.get('storage_observer')
     had_storage = bool(old.get('storage_observer'))
     if add_storage:
         paths += storage_paths()
@@ -695,12 +701,16 @@ def upgrade(target, caps, simplify_context=False):
         if existing['agent_version'] == VERSION and existing['target'] == target:
             if simplify_context and existing['pipeline_variant'] != 'almalinux-wordpress-minimal-v4':
                 raise RuntimeError('cleanup:requires_reviewed_context_v3')
-            identity.status()
-            print('Versión ya instalada; sin cambios.')
+            validate_current(target, caps)
+            print('Versión ya instalada y verificada; sin cambios.')
             return
         if simplify_context:
             raise RuntimeError('cleanup:requires_reviewed_context_v3')
-        upgrade_v4(target, caps)
+        if existing.get('pipeline_variant') == 'observer-v4':
+            upgrade_v4(target, caps)
+        else:
+            import legacy_upgrade
+            legacy_upgrade.upgrade(sys.modules[__name__], target, caps)
         return
     old = validate_migration(target)
     if target.get('wordpress'):
@@ -770,6 +780,35 @@ def upgrade(target, caps, simplify_context=False):
 
 
 
+def validate_current(target, caps):
+    """A repeated upgrade verifies the installed release, never rebaselines drift."""
+    meta = load(BASE / 'manifest.json')
+    if (meta.get('target') != target or meta.get('capabilities') != caps
+            or meta.get('agent_version') != VERSION or meta.get('installer_version') != VERSION
+            or identity.read(BASE / 'complete') != (VERSION + '\n').encode()):
+        raise RuntimeError('upgrade:current_release_mismatch')
+    for path in runtime_files():
+        if identity.read(path) != (HERE / path.name).read_bytes():
+            raise RuntimeError('upgrade:current_runtime_differs_from_release')
+    if meta.get('resource_sampling'):
+        if identity.read(CLOUD / 'collector.py') != (HERE / 'collector.py').read_bytes():
+            raise RuntimeError('upgrade:current_collector_differs_from_release')
+    return identity.status(quiet=True)
+
+
+def request_publication(target):
+    """Run the existing sandboxed publisher. Network failure does not undo a healthy install."""
+    try:
+        response = run(['systemctl', 'start', NAME + '.service'], timeout=130)
+        requested = response.returncode == 0
+    except Exception:
+        requested = False
+    print(json.dumps({'host': target['host'], 'source_id': target['source_id'],
+        'installed_version': VERSION, 'identity_publication': 'completed_or_unchanged' if requested else 'pending_hourly_retry',
+        'remote_acceptance': 'external_evidence_required',
+        'metrics_delivery_verified': False}, indent=2))
+
+
 def create_configuration(args):
     if not args.source_id or not args.ingesting_host or not args.server_ip:
         raise RuntimeError('configure:required_source_id_ingesting_host_server_ip')
@@ -806,7 +845,7 @@ def create_credential(target, path):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('operation', choices=['preflight', 'install', 'upgrade', 'verify', 'status', 'rollback', 'resume', 'configure', 'credential', 'storage-preflight'])
-    p.add_argument('--target', type=Path, default=Path('/root/perfil.json'))
+    p.add_argument('--target', type=Path, help='Perfil; en upgrade/preflight se usa el destino instalado si se omite')
     p.add_argument('--host')
     p.add_argument('--server-ip')
     p.add_argument('--source-id', type=int)
@@ -857,9 +896,11 @@ def main():
         restore(record)
         print('Transacción anterior restaurada; verificar recepción remota.')
         return
-    if not args.target:
-        p.error('--target es obligatorio')
-    target = load(args.target)
+    if args.target is None and args.operation in ('preflight', 'upgrade') and (BASE / 'complete').exists():
+        target = load(BASE / 'manifest.json')['target']
+    else:
+        args.target = args.target or Path('/root/perfil.json')
+        target = load(args.target)
     caps = secure_target(target)
     if args.recover_bootstrap:
         validate_bootstrap_recovery(target)
@@ -874,6 +915,7 @@ def main():
             # Preserve original failure/marker in a root-only backup; do not erase state.
             backup([STATE / 'install-pending.json', STATE / 'last-error.json'], [])
             fresh(target, caps, args.credential, recover_bootstrap=True)
+            request_publication(target)
         return
     if args.recover_partial:
         import partial_recovery
@@ -884,6 +926,7 @@ def main():
                 'changes_applied': False, 'lve_timeout_seconds': 40, 'cpu_quota': '10%'}, indent=2))
         else:
             partial_recovery.recover(sys.modules[__name__], target, caps)
+            request_publication(target)
         return
     if args.operation == 'credential':
         create_credential(target, args.credential or Path('/root/fuente.json'))
@@ -898,7 +941,9 @@ def main():
             previous = load(BASE / 'manifest.json')['agent_version']
             if previous != VERSION:
                 validate_v4_upgrade(target, caps)
-            identity.status()
+                identity.status(quiet=True)
+            else:
+                validate_current(target, caps)
         if LEGACY.exists() and not (BASE / 'complete').exists():
             reviewed = validate_migration(target)
             previous = reviewed['spec']['base_variant']
@@ -928,8 +973,10 @@ def main():
     if args.operation in ('install', 'resume') and (BASE / 'complete').exists():
         if load(BASE / 'manifest.json')['target'] != target:
             raise RuntimeError('install:target_mismatch')
-        identity.status()
-        print('Ya instalado; sin cambios.')
+        if load(BASE / 'manifest.json').get('agent_version') != VERSION:
+            raise RuntimeError('install:older_version_use_upgrade')
+        validate_current(target, caps)
+        print('Ya instalado y verificado; sin cambios.')
         return
     if args.operation == 'resume':
         finish_install(target, caps)
@@ -939,6 +986,7 @@ def main():
         fresh(target, caps, args.credential)
     else:
         upgrade(target, caps, args.simplify_context)
+    request_publication(target)
 
 
 if __name__ == '__main__':

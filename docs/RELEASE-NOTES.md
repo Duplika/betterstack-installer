@@ -1,3 +1,15 @@
+# 4.0.0-rc18 — candidata: actualización revisada y procedimiento más corto
+
+Admite observer-v4 rc10 y rc17 además de las rutas previas. Desde rc6/rc7/rc10/rc12/rc13 refresca el colector a la política de recursos cada300s y logs de incidentes, añade almacenamiento si falta y exige una ejecución nueva saludable. rc15/rc17 conservan su almacenamiento existente. Verifica payloads originales, destino/capacidades, configuración, baseline y servicios. Fuente/token/Vector/cursores/buffers se conservan. rc3/rc4/rc5 mantienen su ruta histórica de identidad; no atribuirles la política eficiente sin revisión específica.
+
+Admite además los layouts heredados AlmaLinux wordpress-v2 rc7 y wordpress-minimal-v4 rc10: compara configuración activa con blueprint empaquetado, auxiliares y rutas/unidades exactas, y actualiza sólo identidad/mantenimiento. Conserva lectores WordPress, relay y métricas existentes; no introduce un segundo recolector ni atribuye LVE/almacenamiento SMART nuevo a estos layouts. No es conversión universal de Vector.
+
+upgrade y preflight pueden omitir --target: usan el destino de la instalación completa, validado contra hostname/IP/cPanel/capacidades. Un perfil explícito distinto se rechaza. La repetición de upgrade, que ya existía en rc17, ahora verifica además versión completa, capacidades y bytes del runtime/colector distribuido antes de declarar sin cambios. install sobre una versión anterior indica usar upgrade; no informa actualización inexistente.
+
+Al terminar instalación/upgrade/recuperación se invoca el publicador systemd protegido existente. No hace falta ejecutar systemctl start manualmente. Si no logra publicar, mantiene la instalación local saludable y avisa pending_hourly_retry; el timer reintenta. No confunde solicitud/HTTP con aceptación remota de métricas. Salida de instalación más breve; verify conserva diagnóstico completo. La comprobación local no publica.
+
+El comportamiento del agente frente a rc17 no cambia: sólo su marca de release. Sin nuevas lecturas, red, cadencias, cuotas, retenciones ni borrados. Los payloads anteriores quedan inmutables. Candidata pendiente de ensayo nativo y aceptación remota por ruta.
+
 # 4.0.0-rc15 — candidata: recuperación temprana DNF y diagnóstico acotado
 
 No consulta repositorios para ca-certificates ya instalado (rpm -q local). Un fallo DNF conserva diagnóstico acotado con URLs eliminadas; ya no se pierde la explicación detrás del código genérico. Timeouts de paquetes600s y etapa de alta1200s, sin esperas ilimitadas ni tareas de repositorio durante monitoreo.

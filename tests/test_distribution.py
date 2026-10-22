@@ -213,12 +213,6 @@ class Rc4UpgradeTests(CandidateUpgradeTests):
 class Rc5UpgradeTests(CandidateUpgradeTests):
     previous_version='4.0.0-rc5'
 
-class Rc6UpgradeTests(CandidateUpgradeTests):
-    previous_version='4.0.0-rc6'
-
-class Rc7UpgradeTests(CandidateUpgradeTests):
-    previous_version='4.0.0-rc7'
-
 class Rc12UpgradeTests(CandidateUpgradeTests):
     previous_version = '4.0.0-rc12'
 
@@ -234,6 +228,13 @@ class Rc12UpgradeTests(CandidateUpgradeTests):
         self.meta['baseline'] = identity.snapshot(self.meta['critical_paths'], self.meta['config_path'])
         self.save_meta()
         self.execute.side_effect = self.native_execute
+        if self.previous_version != '4.0.0-rc13':
+            self.stack.enter_context(patch.object(installer, 'enable_storage', side_effect=self.storage_enable))
+
+    def storage_enable(self):
+        for path in installer.storage_paths():
+            path.write_text('storage fixture')
+        return {}
 
     def native_execute(self, args, **kwargs):
         if args == ['systemctl', 'start', 'duplika-cloudlinux-observer.service']:
@@ -412,3 +413,13 @@ class Rc13StorageUpgradeTests(Rc12UpgradeTests):
             installer.upgrade(TARGET,self.caps)
         self.assertEqual(before,{p:p.read_bytes() for p in before})
         self.assertFalse(any(p.exists() for p in installer.storage_paths()))
+
+
+class Rc6UpgradeTests(Rc12UpgradeTests):
+    previous_version = '4.0.0-rc6'
+
+class Rc7UpgradeTests(Rc12UpgradeTests):
+    previous_version = '4.0.0-rc7'
+
+class Rc10UpgradeTests(Rc12UpgradeTests):
+    previous_version = '4.0.0-rc10'
