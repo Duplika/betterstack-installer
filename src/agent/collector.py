@@ -26,6 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
+COLLECTOR_RELEASE = '4.0.0-rc17'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -702,7 +703,7 @@ def main():
     out.metric('duplika_collector_heartbeat', 1)
     out.metric('duplika_collector_failed_components', sum(v == 'failed' for v in components.values()))
     out.flush()
-    atomic_json(STATE / 'collector-health.json', {'at': time.time(), 'components': components})
+    atomic_json(STATE / 'collector-health.json', {'at': time.time(), 'started_at': started_wall, 'agent_version': COLLECTOR_RELEASE, 'components': components})
     atomic_json(STATE / 'state.json', state)
     print(json.dumps({'status': 'ok', 'duration_seconds': round(duration, 3),
                       'components': components, 'logs': len(out.logs), 'metrics': len(out.metrics)}))

@@ -157,8 +157,8 @@ class CandidateUpgradeTests(unittest.TestCase):
         self.meta['baseline']=identity.snapshot(self.meta['critical_paths'],self.meta['config_path'])
         self.save_meta()
         self.status=self.stack.enter_context(patch.object(identity,'status',return_value={}))
-        self.execute=self.stack.enter_context(patch.object(installer,'execute',return_value=types.SimpleNamespace(returncode=0)))
-        self.stack.enter_context(patch.object(installer,'run',return_value=types.SimpleNamespace(returncode=0)))
+        self.execute=self.stack.enter_context(patch.object(installer,'execute',return_value=types.SimpleNamespace(returncode=0, stdout='inactive')))
+        self.stack.enter_context(patch.object(installer,'run',return_value=types.SimpleNamespace(returncode=0, stdout='inactive')))
         self.stack.enter_context(patch.object(installer,'trusted_executable',return_value='/usr/bin/vector'))
 
     def save_meta(self):
@@ -233,6 +233,14 @@ class Rc12UpgradeTests(CandidateUpgradeTests):
         (installer.CLOUD / 'profile.json').write_text(json.dumps({'agent_version': self.previous_version}))
         self.meta['baseline'] = identity.snapshot(self.meta['critical_paths'], self.meta['config_path'])
         self.save_meta()
+        self.execute.side_effect = self.native_execute
+
+    def native_execute(self, args, **kwargs):
+        if args == ['systemctl', 'start', 'duplika-cloudlinux-observer.service']:
+            (installer.CLOUD_DATA / 'private/collector-health.json').write_text(json.dumps({
+                'at': __import__('time').time(), 'started_at': __import__('time').time(),
+                'agent_version': capabilities.VERSION, 'components': {'lve': True, 'processes': 1, 'access': {}}}))
+        return types.SimpleNamespace(returncode=0, stdout='inactive')
 
     def test_reviewed_rc3_upgrade_preserves_transport_and_state(self):
         paths = [p for p in installer.observer_base_paths() if p.name not in ('collector.py', 'profile.json')]
@@ -372,7 +380,7 @@ class Rc13StorageUpgradeTests(Rc12UpgradeTests):
 
     def unit_state(self, args, **kwargs):
         code = 3 if len(args) > 1 and args[1] in ('is-active', 'is-enabled') and any('duplika-storage-observer' in a for a in args) else 0
-        return types.SimpleNamespace(returncode=code)
+        return types.SimpleNamespace(returncode=code, stdout='inactive')
 
     def test_reviewed_rc3_upgrade_preserves_transport_and_state(self):
         before = {p:p.read_bytes() for p in installer.observer_base_paths() if p.name not in ('collector.py','profile.json')}
@@ -395,6 +403,7 @@ class Rc13StorageUpgradeTests(Rc12UpgradeTests):
         before={p:p.read_bytes() for p in installer.observer_base_paths()+installer.runtime_files()+[
             installer.BASE/'manifest.json',installer.BASE/'complete',installer.CLOUD_DATA/'private/state.json']}
         def execute(args, **kwargs):
+            self.native_execute(args, **kwargs)
             if args == ['systemctl','start','duplika-storage-observer.service']:
                 raise RuntimeError('storage native failure')
             return types.SimpleNamespace(returncode=0)

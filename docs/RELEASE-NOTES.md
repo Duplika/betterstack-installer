@@ -156,3 +156,12 @@ Upgrade revisado desde observer-v4 rc15 completo con almacenamiento: exige hashe
 Aceptación del piloto: mínimo12–15min para ver al menos dos consultas LVE/procesos separadas300s, ciclos de acceso/almacenamiento intermedios, antigüedad/fallos y ausencia de métricas antiguas reemitidas. El número de nombres de métricas por minuto ya no será constante; no exigir66cada minuto. Comparar bytes JSON de logs y muestras de métricas por separado en ventanas iguales; no confundir con bytes facturados. En dashboard, LVE debe mostrar última observación con su fecha, sin convertir ausencia entre muestras en cero. Nunca aumentar cuota o emitir relleno para ocultar huecos.
 
 Simulación reproducible scripts/benchmark_efficiency.py:60min,200cuentas/400sitios y dos incidentes sintéticos,12consultas de recursos frente a60,60resúmenes de errores conservados; logs JSON7013648→89524bytes(98,72%menos). Es una simulación orientada a tráfico rutinario, no predicción de ahorro real; validar en un host antes de ampliar.
+
+
+## rc17: arranque de una ejecución nueva al actualizar
+
+rc16 queda sustituida para el piloto: su comprobación inicial podía intentar iniciar la unidad mientras el job oneshot anterior seguía activando después de liberar collector.lock. systemctl start puede unirse a ese job antiguo, que no genera el nuevo marker, y el upgrade falla/revierte con collector-health.json ausente. La carrera de ciclo/job se reprodujo con estados activando/activo/inactivo; el código no espera sólo el lock.
+
+rc17 mantiene la política eficiente de rc16 y, tras pausar el timer y reemplazar el código bajo lock, espera hasta60s a que la unidad esté inactiva antes de arrancar la nueva ejecución. No mata ciclos. Estado fallido/desconocido o timeout aborta con error específico/reversión. El marker ahora lleva versión del código y hora de inicio; se exige que sea de la versión nueva, haya comenzado después de iniciar el reemplazo, esté fresco y contenga procesos/LVE/accesos sin componentes fallidos. Un fichero viejo, incompleto o ausente no certifica éxito.
+
+No instalar rc16 ni forzar/rebaselinar un upgrade fallido. Si la reversión automática dejó rc15 completa/saludable, preflight y upgrade rc17 con el mismo perfil; sin rollback manual,credential,install ni cambios de fuente. La validación del destino/baseline determina si se puede continuar. Configuración Vector,almacenamiento,cadencias/política de logs y límites sin cambios respecto a rc16. La aceptación remota sigue pendiente; no extrapolar simulaciones a producción.

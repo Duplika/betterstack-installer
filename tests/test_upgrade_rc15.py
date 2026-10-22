@@ -61,6 +61,7 @@ class UpgradeTests(unittest.TestCase):
             'storage_observer': True, 'vector_binary': str(self.vector),
             'baseline': identity.snapshot(paths, str(i.CLOUD / 'vector.json'))}
         (i.BASE / 'manifest.json').write_text(json.dumps(self.meta)); (i.BASE / 'complete').write_text('4.0.0-rc15\n')
+        self.stack.enter_context(patch.object(i, 'run', return_value=__import__('subprocess').CompletedProcess([], 0, 'inactive', '')))
         self.stack.enter_context(patch.object(i, 'trusted_executable', side_effect=lambda name: str(self.vector) if name == 'vector' else None))
 
     def test_original_payload_validates_and_storage_hashes_are_verified(self):
@@ -81,7 +82,7 @@ class UpgradeTests(unittest.TestCase):
         def execute(args, **kwargs):
             calls.append(args)
             if args == ['systemctl', 'start', 'duplika-cloudlinux-observer.service']:
-                (i.CLOUD_DATA / 'private/collector-health.json').write_text(json.dumps({'at': time.time(), 'components': {'lve': True}}))
+                (i.CLOUD_DATA / 'private/collector-health.json').write_text(json.dumps({'at': time.time(), 'started_at': time.time(), 'agent_version': i.VERSION, 'components': {'lve': True, 'processes': 1, 'access': {}}}))
         with patch.object(identity, 'status'), patch.object(i, 'execute', side_effect=execute), \
              patch.object(i, 'observer_quiet_point', side_effect=lambda: contextlib.nullcontext()), \
              patch.object(i, 'backup', return_value={}), patch.object(i, 'activate') as activate:

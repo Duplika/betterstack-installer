@@ -615,6 +615,36 @@ def observer_quiet_point(timeout=60):
         os.close(fd)
 
 
+def wait_observer_inactive(timeout=60):
+    """A released process lock does not mean systemd finished the old oneshot job."""
+    deadline = time.monotonic() + timeout
+    while True:
+        result = run(['systemctl', 'show', 'duplika-cloudlinux-observer.service',
+                      '-p', 'ActiveState', '--value'])
+        state = result.stdout.strip() if result.returncode == 0 else ''
+        if state == 'inactive':
+            return
+        if state == 'failed':
+            raise RuntimeError('upgrade:previous_observer_job_failed')
+        if state not in ('active', 'activating', 'deactivating', 'reloading'):
+            raise RuntimeError('upgrade:observer_job_state_unavailable')
+        if time.monotonic() >= deadline:
+            raise RuntimeError('upgrade:observer_job_busy_retry_later')
+        time.sleep(0.1)
+
+
+def verify_new_observer_cycle(started_after):
+    try:
+        health = load(CLOUD_DATA / 'private/collector-health.json')
+    except FileNotFoundError:
+        raise RuntimeError('upgrade:new_observer_cycle_marker_missing') from None
+    if (health.get('agent_version') != VERSION or health.get('started_at', 0) < started_after
+            or not 0 <= time.time() - health.get('at', 0) < 180
+            or not {'processes', 'lve', 'access'}.issubset(health.get('components', {}))
+            or 'failed' in health.get('components', {}).values()):
+        raise RuntimeError('upgrade:new_observer_cycle_not_verified')
+
+
 def upgrade_v4(target, caps):
     old = validate_v4_upgrade(target, caps)
     identity.status()  # Must be healthy before any write or service change.
@@ -640,16 +670,16 @@ def upgrade_v4(target, caps):
                 profile = load(CLOUD / 'profile.json')
                 if profile.get('agent_version') != old['agent_version']:
                     raise RuntimeError('upgrade:observer_profile_version_mismatch')
+                first_cycle_after = time.time()
                 write(CLOUD / 'collector.py', (HERE / 'collector.py').read_bytes(), 0o700)
                 profile['agent_version'] = VERSION
                 write(CLOUD / 'profile.json', identity.canonical(profile))
                 if trusted_executable('restorecon'):
                     execute(['restorecon', '-F', str(CLOUD / 'collector.py'), str(CLOUD / 'profile.json')])
-            # The timer starts the new collector; transport is never stopped.
+            # Do not join an old job that has released its lock but is still exiting.
+            wait_observer_inactive()
             execute(['systemctl', 'start', 'duplika-cloudlinux-observer.service'], timeout=60)
-            health = load(CLOUD_DATA / 'private/collector-health.json')
-            if not 0 <= time.time() - health.get('at', 0) < 180 or 'failed' in health.get('components', {}).values():
-                raise RuntimeError('upgrade:first_cycle_not_healthy')
+            verify_new_observer_cycle(first_cycle_after)
             execute(['systemctl', 'start', observer_timer])
         activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [name for name in old['services'] if name not in (NAME + '.timer', 'duplika-storage-observer.timer')],
