@@ -28,11 +28,15 @@ USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
 
 
+SAMPLE_INTERVAL_SECONDS = 300
+INCIDENT_REMINDER_SECONDS = 900
+
+
 class LogPolicy:
-    """Thin only metric-backed summaries; preserve metadata transitions and pressure."""
+    """Metric-backed resources log only metadata changes and pressure transitions."""
     def __init__(self, state, now):
         self.now = now
-        self.entries = state.setdefault('log_policy_v2', {})
+        self.entries = state.setdefault('resource_events_v16', {})
         for key, entry in list(self.entries.items()):
             if now - entry.get('seen_at', 0) > 86400:
                 del self.entries[key]
@@ -44,38 +48,53 @@ class LogPolicy:
         if kind == 'isolated_domain_usage':
             key += ':' + str(fields.get('site', ''))
         if kind == 'account_resources':
-            # running_processes and observation flags are not duplicated in account metrics.
-            signature = {k: fields.get(k) for k in ('cpanel_account', 'measurement',
-                'cpu_observed', 'io_observed', 'running_processes', 'blocked_processes')}
+            metadata = None
             pressure = (fields.get('blocked_processes') or 0) > 0
         else:
             usage, limits = fields.get('usage') or {}, fields.get('limits') or {}
-            signature = {k: fields.get(k) for k in ('lve_id', 'limits', 'mysql_governor')}
-            signature['usage_fields'] = sorted(usage)
-            signature['mysql_fields'] = sorted(fields.get('mysql') or {})
-            # Keep every sample near any configured LVE limit, including zero-CPU I/O pressure.
-            pressure = any(number(limit) is not None and float(limit) > 0 and
-                number(usage.get(k)) is not None and float(usage[k]) / float(limit) >= 0.8
-                for k, limit in limits.items())
-        signature['pressure'] = pressure
+            metadata = {k: fields.get(k) for k in ('lve_id', 'limits', 'mysql_governor')}
+            ratios = [float(usage[k]) / float(limit) for k, limit in limits.items()
+                      if number(limit) is not None and float(limit) > 0 and number(usage.get(k)) is not None]
+            pressure = any(value >= 0.8 for value in ratios) if ratios else None
         old = self.entries.get(key)
-        reason = None
-        if not old:
-            reason = 'first_observation'
-        elif self.now < old['emitted_at']:
-            reason = 'clock_reset'
-        elif signature != old['signature']:
-            reason = 'metadata_or_pressure_change'
-        elif pressure:
-            reason = 'resource_pressure'
-        elif self.now - old['emitted_at'] >= 300:
-            reason = 'periodic_5m'
-        if reason:
-            self.entries[key] = {'emitted_at': self.now, 'seen_at': self.now,
-                                 'signature': signature}
+        if pressure is None:
+            # Missing usage/limits is not evidence that a prior incident recovered.
+            pressure = old['pressure'] if old else False
+            pressure_observed = False
         else:
-            old['seen_at'] = self.now
+            pressure_observed = True
+        reason = None
+        if pressure_observed and old and pressure != old['pressure']:
+            reason = 'pressure_started' if pressure else 'pressure_recovered'
+        elif pressure_observed and pressure and (not old or self.now < old['emitted_at'] or
+                           self.now - old['emitted_at'] >= INCIDENT_REMINDER_SECONDS):
+            reason = 'pressure_started' if not old else 'pressure_reminder'
+        elif metadata is not None and (not old or metadata != old['metadata']):
+            reason = 'limits_or_capability_changed'
+        self.entries[key] = {'seen_at': self.now, 'pressure': pressure, 'metadata': metadata,
+                            'emitted_at': self.now if reason else (old or {}).get('emitted_at', self.now)}
         return reason
+
+
+def sampled_component(out, state, name, function, now):
+    """Run expensive snapshots at most every five minutes; never replay old values."""
+    samples = state.setdefault('resource_samples_v16', {})
+    entry = samples.setdefault(name, {})
+    due = 'attempted_at' not in entry or now < entry['attempted_at'] or now - entry['attempted_at'] >= SAMPLE_INTERVAL_SECONDS
+    if due:
+        entry['attempted_at'] = now
+        try:
+            entry['result'] = function()
+            entry['succeeded_at'] = now
+        except Exception as error:
+            entry['result'] = 'failed'
+            out.log('collector_error', component=name, error_class=type(error).__name__, level='warning')
+    successful = entry.get('succeeded_at')
+    if successful is not None and now >= successful:
+        out.metric('duplika_' + name + '_sample_age_seconds', now - successful)
+    out.metric('duplika_' + name + '_sample_interval_seconds', SAMPLE_INTERVAL_SECONDS)
+    out.metric('duplika_' + name + '_sample_failed', int(entry.get('result') == 'failed'))
+    return entry.get('result', 'failed')
 
 
 def timestamp():
@@ -195,32 +214,53 @@ class Output:
             self.suppressed[kind] += 1
             return
         if kind == 'site_traffic':
-            pending = self.state.setdefault('traffic_pending_v4', {})
+            # Healthy traffic stays in metrics. Only incident windows retain breakdowns.
+            pending = self.state.setdefault('traffic_incidents_v16', {})
             key = fields['site']
-            item = pending.setdefault(key, {'since': self.now, 'counts': {}, 'breakdown': {}, 'seconds': 0, 'complete': True})
+            item = pending.get(key)
+            errors = fields.get('errors_5xx', 0)
+            if item is None and not errors:
+                self.suppressed[kind] += 1
+                return
+            first = item is None
+            if first:
+                item = pending[key] = {'counts': {}, 'breakdown': {}, 'seconds': 0,
+                                       'complete': True, 'emitted_at': self.now}
             for name in ('requests', 'response_bytes', 'errors_5xx', 'errors_4xx', 'post_requests', 'dynamic_requests'):
                 item['counts'][name] = item['counts'].get(name, 0) + fields.get(name, 0)
             for name, count in fields.get('breakdown', {}).items():
                 item['breakdown'][name] = item['breakdown'].get(name, 0) + count
             item['seconds'] += fields['interval_seconds']
             item['complete'] = item['complete'] and fields['coverage_complete']
-            if item['seconds'] < 300 and self.now - item['since'] < 300 and not fields.get('errors_5xx'):
+            recovered = not errors and fields['coverage_complete']
+            due = first or recovered or self.now < item['emitted_at'] or self.now - item['emitted_at'] >= INCIDENT_REMINDER_SECONDS
+            if not due:
                 self.suppressed[kind] += 1
                 return
             fields.update(item['counts'], breakdown=item['breakdown'], interval_seconds=round(item['seconds'], 3),
-                          coverage_complete=item['complete'])
-            del pending[key]
+                          coverage_complete=item['complete'],
+                          level='info' if recovered else 'warning',
+                          log_reason='http_5xx_started' if first else ('http_5xx_recovered' if recovered else 'http_5xx_reminder'))
+            if recovered:
+                del pending[key]
+            else:
+                item.update(counts={}, breakdown={}, seconds=0, complete=True, emitted_at=self.now)
         if kind in ('collector_heartbeat', 'access_log_coverage', 'collector_unavailable', 'collector_error'):
-            keys = {'collector_heartbeat': ('components', 'accounts', 'domains'),
-                    'access_log_coverage': ('coverage_complete',),
-                    'collector_unavailable': ('component', 'path'),
-                    'collector_error': ('component', 'error_class')}[kind]
-            signature = {key: fields.get(key) for key in keys}
+            if kind == 'collector_heartbeat':
+                signature = {'accounts': fields.get('accounts'), 'domains': fields.get('domains'),
+                             'components': {k: ('failed' if v == 'failed' else 'available' if v is True or isinstance(v, (int, dict)) else v)
+                                            for k, v in fields.get('components', {}).items()}}
+                interval = 86400
+            else:
+                keys = {'access_log_coverage': ('coverage_complete',),
+                        'collector_unavailable': ('component', 'path'),
+                        'collector_error': ('component', 'error_class')}[kind]
+                signature = {key: fields.get(key) for key in keys}
+                interval = INCIDENT_REMINDER_SECONDS if kind != 'access_log_coverage' or not fields.get('coverage_complete') else 86400
             key = kind + ':' + str(fields.get('component', '')) + ':' + str(fields.get('path', ''))
-            entries = self.state.setdefault('event_policy_v4', {})
+            entries = self.state.setdefault('event_policy_v16', {})
             old = entries.get(key, {})
-            incomplete = kind == 'access_log_coverage' and not fields.get('coverage_complete')
-            if old.get('signature') == signature and self.now - old.get('at', 0) < 300 and not incomplete:
+            if old.get('signature') == signature and 0 <= self.now - old.get('at', 0) < interval:
                 self.suppressed[kind] += 1
                 return
             entries[key] = {'signature': signature, 'at': self.now}
@@ -434,7 +474,7 @@ def collect_access(out, state, domains, profile):
     sites = collections.defaultdict(collections.Counter)
     groups = collections.defaultdict(collections.Counter)
     budget = MAX_CYCLE_BYTES
-    pending = state.get('traffic_pending_v4', {})
+    pending = state.get('traffic_incidents_v16', {})
     for site in list(pending):
         if site not in domains:
             del pending[site]
@@ -501,7 +541,7 @@ def collect_access(out, state, domains, profile):
             coverage['unreadable_files'] += 1
     complete = not any(coverage[k] for k in ('skipped_bytes', 'rotated', 'initialized', 'unparsed_lines', 'unreadable_files', 'oversized_lines'))
     elapsed = max(1, time.time() - state.get('access_at', time.time()))
-    for pending_site in state.get('traffic_pending_v4', {}):
+    for pending_site in state.get('traffic_incidents_v16', {}):
         if pending_site in domains:
             sites.setdefault(pending_site, collections.Counter())
     for site, counts in sites.items():
@@ -617,17 +657,23 @@ def main():
     state = read_json(STATE / 'state.json', {})
     boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
     if state.get('boot_id') != boot:
+        state.pop('resource_samples_v16', None)
         state.pop('proc', None)
         state.pop('proc_uptime', None)
         state.pop('log_policy_v2', None)
     state['boot_id'] = boot
+    for obsolete in ('traffic_pending_v4', 'event_policy_v4', 'log_policy_v2'):
+        state.pop(obsolete, None)
     out = Output(profile, state)
     started = time.monotonic()
     domains, accounts, users = inventory()
     components = {}
+    started_wall = time.time()
     for name, fn in [
-        ('processes', lambda: collect_processes(out, state, domains, accounts, users)),
-        ('lve', lambda: collect_lve(out, profile)),
+        ('processes', lambda: sampled_component(out, state, 'processes',
+            lambda: collect_processes(out, state, domains, accounts, users), started_wall)),
+        ('lve', lambda: sampled_component(out, state, 'lve',
+            lambda: collect_lve(out, profile), started_wall)),
         ('access', lambda: collect_access(out, state, domains, profile)),
         ('errors', lambda: collect_errors(out, state, domains, profile)),
         ('kernel', lambda: collect_kernel(out, state)),
@@ -656,6 +702,7 @@ def main():
     out.metric('duplika_collector_heartbeat', 1)
     out.metric('duplika_collector_failed_components', sum(v == 'failed' for v in components.values()))
     out.flush()
+    atomic_json(STATE / 'collector-health.json', {'at': time.time(), 'components': components})
     atomic_json(STATE / 'state.json', state)
     print(json.dumps({'status': 'ok', 'duration_seconds': round(duration, 3),
                       'components': components, 'logs': len(out.logs), 'metrics': len(out.metrics)}))

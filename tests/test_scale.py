@@ -134,7 +134,7 @@ class ScaleTests(unittest.TestCase):
             self.assertEqual(coverage['rotated'], 1)
             collector.collect_access(collector.Output(PROFILE, state), state, {}, profile)
             self.assertEqual(state['access_files'], {})
-            self.assertEqual(state['traffic_pending_v4'], {})
+            self.assertEqual(state.get('traffic_incidents_v16', {}), {})
 
     def test_isolated_domain_logs_thinned_but_pressure_and_metrics_kept(self):
         state = {}; logs = []; metrics = []
@@ -151,4 +151,4 @@ class ScaleTests(unittest.TestCase):
             out = collector.Output(PROFILE, state, now=now)
             out.log('isolated_domain_usage', user='account', site='one.example.net',
                     usage={'cpu_percent': 85}, limits={'cpu_percent': 100})
-            self.assertEqual(len(out.logs), 1)
+            self.assertEqual(len(out.logs), 1 if now == 360 else 0)

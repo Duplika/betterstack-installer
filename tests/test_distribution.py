@@ -226,6 +226,7 @@ class Rc12UpgradeTests(CandidateUpgradeTests):
         super().setUp()
         data = self.root / 'observer-data'; data.mkdir()
         private = data / 'private'; private.mkdir()
+        (private / 'collector-health.json').write_text(json.dumps({'at': __import__('time').time(), 'components': {'lve': True}}))
         (private / 'collector.lock').write_bytes(b'')
         (private / 'state.json').write_bytes(b'{"offset":987654}')
         self.stack.enter_context(patch.object(installer, 'CLOUD_DATA', data))
@@ -246,7 +247,7 @@ class Rc12UpgradeTests(CandidateUpgradeTests):
         commands = [call.args[0] for call in self.execute.call_args_list]
         self.assertIn(['systemctl','start','duplika-cloudlinux-observer.timer'], commands)
         self.assertFalse(any('duplika-betterstack-cloudlinux.service' in command for command in commands))
-        self.assertFalse(any('duplika-cloudlinux-observer.service' in command for command in commands))
+        self.assertIn(['systemctl', 'start', 'duplika-cloudlinux-observer.service'], commands)
 
     def test_failed_activation_restores_old_runtime(self):
         before = {p:p.read_bytes() for p in installer.observer_base_paths()+installer.runtime_files()+[
@@ -337,6 +338,24 @@ class IdentityDeliveryTests(unittest.TestCase):
         identity.status()
         self.send.assert_not_called()
         self.assertFalse(self.last.exists())
+
+    def test_local_health_marker_replaces_daily_log_as_liveness_evidence(self):
+        manifest = identity.BASE / 'manifest.json'
+        meta = json.loads(manifest.read_text())
+        meta.update(config_path='/etc/duplika-betterstack-cloudlinux/vector.json', resource_sampling={'lve_seconds': 300})
+        original_read = identity.read
+        marker = {'at': 999999, 'components': {'lve': True, 'processes': 200, 'access': {}}}
+        def read(path):
+            if str(path).endswith('/collector-health.json'): return identity.canonical(marker)
+            if str(path) == '/etc/duplika-betterstack-cloudlinux/vector.json': return original_read(identity.BASE / 'vector.json')
+            return original_read(path)
+        manifest.write_text(json.dumps(meta))
+        with patch.object(identity, 'read', side_effect=read):
+            self.assertTrue(identity.status()['services_healthy'])
+            marker['at'] = 999000
+            with self.assertRaisesRegex(RuntimeError, 'integrity_or_service_failure'): identity.status()
+            marker['at'] = 999999; marker['components']['lve'] = 'failed'
+            with self.assertRaisesRegex(RuntimeError, 'integrity_or_service_failure'): identity.status()
 
 if __name__=='__main__':unittest.main()
 

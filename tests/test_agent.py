@@ -132,12 +132,12 @@ class CollectorTests(unittest.TestCase):
             out=col.Output(PROFILE,state,now=now)
             out.log('site_traffic',site='example.net',user='account',interval_seconds=60,coverage_complete=True,requests=7,errors_5xx=0,breakdown={'route:home':7})
             out.metric('requests',7/60);logs.extend(out.logs);metrics.extend(out.metrics);state=json.loads(json.dumps(state))
-        self.assertEqual(len(logs),1);self.assertEqual(logs[0]['requests'],35);self.assertEqual(logs[0]['breakdown']['route:home'],35);self.assertEqual(len(metrics),5)
+        self.assertEqual(logs,[]);self.assertEqual(len(metrics),5)
     def test_5xx_flushes_accumulated_counts(self):
         state={};fields=dict(site='example.net',user='account',interval_seconds=60,coverage_complete=True,requests=2,breakdown={})
         col.Output(PROFILE,state,now=60).log('site_traffic',errors_5xx=0,**fields)
         out=col.Output(PROFILE,state,now=120);out.log('site_traffic',errors_5xx=1,**fields)
-        self.assertEqual(out.logs[0]['requests'],4)
+        self.assertEqual(out.logs[0]['requests'],2);self.assertEqual(out.logs[0]['log_reason'],'http_5xx_started')
     def test_blocked_processes_retained(self):
         state={};col.Output(PROFILE,state,now=0);out=col.Output(PROFILE,state,now=60)
         out.log('process_sample',state='R');out.log('process_sample',state='D');self.assertEqual(len(out.logs),1)

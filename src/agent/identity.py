@@ -107,17 +107,25 @@ def status(publish=False):
         p = health.run(['systemctl', 'show', name, '-p', 'Result', '--value'])
         services[name + ':last_result'] = p.returncode == 0 and p.stdout.strip() == 'success'
     if meta['config_path'] == '/etc/duplika-betterstack-cloudlinux/vector.json':
-        spool = Path('/var/lib/duplika-betterstack-cloudlinux/spool/events.jsonl')
-        try:
-            with spool.open('rb') as stream:
-                stream.seek(max(0, spool.stat().st_size - 262144))
-                rows = stream.read(262144).splitlines()
-            heartbeat = next(json.loads(row) for row in reversed(rows) if b'collector_heartbeat' in row and json.loads(row).get('event_kind') == 'collector_heartbeat')
-            event_time = datetime.datetime.fromisoformat(heartbeat['dt']).timestamp()
-            fresh = 0 <= time.time() - event_time < 900
-            services['observer_heartbeat'] = fresh and 'failed' not in heartbeat.get('components', {}).values()
-        except (OSError, ValueError, StopIteration):
-            services['observer_heartbeat'] = False
+        if meta.get('resource_sampling'):
+            try:
+                heartbeat = json.loads(read(Path('/var/lib/duplika-betterstack-cloudlinux/private/collector-health.json')))
+                services['observer_heartbeat'] = (0 <= time.time() - heartbeat.get('at', 0) < 180
+                    and 'failed' not in heartbeat.get('components', {}).values())
+            except (OSError, ValueError, RuntimeError):
+                services['observer_heartbeat'] = False
+        else:
+            spool = Path('/var/lib/duplika-betterstack-cloudlinux/spool/events.jsonl')
+            try:
+                with spool.open('rb') as stream:
+                    stream.seek(max(0, spool.stat().st_size - 262144))
+                    rows = stream.read(262144).splitlines()
+                heartbeat = next(json.loads(row) for row in reversed(rows) if b'collector_heartbeat' in row and json.loads(row).get('event_kind') == 'collector_heartbeat')
+                event_time = datetime.datetime.fromisoformat(heartbeat['dt']).timestamp()
+                fresh = 0 <= time.time() - event_time < 900
+                services['observer_heartbeat'] = fresh and 'failed' not in heartbeat.get('components', {}).values()
+            except (OSError, ValueError, StopIteration):
+                services['observer_heartbeat'] = False
     if meta.get('storage_observer'):
         try:
             storage = json.loads(read(Path('/var/lib/duplika-betterstack-cloudlinux/private/storage-health.json')))
@@ -141,6 +149,8 @@ def status(publish=False):
         'inactive_services': [k for k, v in services.items() if not v],
         'maintenance': maintenance, 'metrics_delivery_verified': False,
         'release_channel': 'candidate', 'remote_acceptance': 'external_evidence_required'}
+    if meta.get('resource_sampling'):
+        event['resource_sampling'] = meta['resource_sampling']
     old = json.loads(read(STATE / 'last-send.json')) if (STATE / 'last-send.json').exists() else {}
     digest = hashlib.sha256(canonical(hashes)).hexdigest()
     stable = {key: value for key, value in event.items() if key != 'dt'}

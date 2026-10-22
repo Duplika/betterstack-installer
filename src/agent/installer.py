@@ -372,7 +372,7 @@ WantedBy=timers.target
 """
 
 
-def activate(target, caps, config, profile_path, services, oneshots, original_paths, vector, pipeline_variant="observer-v4", migration_review=None, storage_enabled=False):
+def activate(target, caps, config, profile_path, services, oneshots, original_paths, vector, pipeline_variant="observer-v4", migration_review=None, storage_enabled=False, storage_preserved=False):
     python = trusted_executable(sys.executable)
     if not python or not re.fullmatch(r'/[A-Za-z0-9_./-]+', python):
         raise RuntimeError('unsafe_python_interpreter')
@@ -412,7 +412,8 @@ WantedBy=timers.target
     identity.destination(config_value, target)
     storage_transaction = None
     if storage_enabled:
-        storage_transaction = enable_storage()
+        if not storage_preserved:
+            storage_transaction = enable_storage()
         original_paths = [*original_paths, *storage_paths()]
         services = [*services, 'duplika-storage-observer.timer']
         oneshots = [*oneshots, 'duplika-storage-observer.service']
@@ -423,6 +424,8 @@ WantedBy=timers.target
         'target': target, 'capabilities': caps, 'pipeline_variant': pipeline_variant, 'config_path': str(config), 'profile_path': str(profile_path),
         'services': services + [NAME + '.timer'], 'oneshots': oneshots,
         'vector_binary': vector, 'critical_paths': critical, 'baseline': identity.snapshot(critical, str(config))}
+    if pipeline_variant == 'observer-v4' and (CLOUD / 'collector.py').read_bytes() == (HERE / 'collector.py').read_bytes():
+        meta['resource_sampling'] = {'processes_seconds': 300, 'lve_seconds': 300}
     if storage_enabled:
         meta['storage_observer'] = True
     try:
@@ -551,31 +554,38 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions = {'4.0.0-rc3': 'upgrade_rc3.json', '4.0.0-rc4': 'upgrade_rc4.json',
                          '4.0.0-rc5': 'upgrade_rc5.json', '4.0.0-rc6': 'upgrade_rc6.json',
                          '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json',
-                         '4.0.0-rc13': 'upgrade_rc13.json'}
+                         '4.0.0-rc13': 'upgrade_rc13.json', '4.0.0-rc15': 'upgrade_rc15.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
     if old.get('target') != target or old.get('capabilities') != caps:
         raise RuntimeError('upgrade:target_or_capabilities_changed')
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
+    had_storage = previous == '4.0.0-rc15'
+    if had_storage:
+        expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
             or old.get('config_path') != str(CLOUD / 'vector.json')
             or old.get('profile_path') != str(CLOUD / 'profile.json')
             or old.get('critical_paths') != sorted(map(str, expected))
             or old.get('services') != ['duplika-betterstack-cloudlinux.service',
-                'duplika-cloudlinux-observer.timer', NAME + '.timer']
-            or old.get('oneshots') != ['duplika-cloudlinux-observer.service']):
+                'duplika-cloudlinux-observer.timer', *(['duplika-storage-observer.timer'] if had_storage else []), NAME + '.timer']
+            or old.get('oneshots') != ['duplika-cloudlinux-observer.service', *(['duplika-storage-observer.service'] if had_storage else [])]
+            or bool(old.get('storage_observer')) != had_storage):
         raise RuntimeError('upgrade:unreviewed_v4_layout')
     reviewed = load(HERE / reviewed_versions[previous])
-    if previous in ('4.0.0-rc12', '4.0.0-rc13'):
+    if previous in ('4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15'):
         reviewed[NAME + '.service'] = hashlib.sha256(
             reviewed['identity_service_template'].replace('__PYTHON__', sys.executable).encode()).hexdigest()
-    for path in runtime_files() + [CLOUD / 'collector.py', UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]:
+    if had_storage:
+        reviewed['duplika-storage-observer.service'] = hashlib.sha256(STORAGE_SERVICE.replace('__PYTHON__', sys.executable).encode()).hexdigest()
+        reviewed['duplika-storage-observer.timer'] = hashlib.sha256(STORAGE_TIMER.encode()).hexdigest()
+    for path in runtime_files() + [CLOUD / 'collector.py', UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')] + (storage_paths() if had_storage else []):
         if hashlib.sha256(identity.read(path)).hexdigest() != reviewed[path.name]:
             raise RuntimeError('upgrade:unreviewed_v4_runtime')
     if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
         raise RuntimeError('upgrade:v4_drift')
-    if previous in ('4.0.0-rc12', '4.0.0-rc13') and load(CLOUD / 'profile.json').get('agent_version') != previous:
+    if previous in ('4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15') and load(CLOUD / 'profile.json').get('agent_version') != previous:
         raise RuntimeError('upgrade:observer_profile_version_mismatch')
     vector = trusted_executable('vector')
     if not vector or Path(old['vector_binary']).resolve() != Path(vector).resolve():
@@ -610,13 +620,14 @@ def upgrade_v4(target, caps):
     identity.status()  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    refresh_observer = old['agent_version'] in ('4.0.0-rc12', '4.0.0-rc13')
+    refresh_observer = old['agent_version'] in ('4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
         paths += [CLOUD / 'collector.py', CLOUD / 'profile.json']
         services.append(observer_timer)
     add_storage = old['agent_version'] == '4.0.0-rc13'
+    had_storage = bool(old.get('storage_observer'))
     if add_storage:
         paths += storage_paths()
     transaction = backup(paths, services + (['duplika-storage-observer.timer', 'duplika-storage-observer.service'] if add_storage else []))
@@ -635,10 +646,14 @@ def upgrade_v4(target, caps):
                 if trusted_executable('restorecon'):
                     execute(['restorecon', '-F', str(CLOUD / 'collector.py'), str(CLOUD / 'profile.json')])
             # The timer starts the new collector; transport is never stopped.
+            execute(['systemctl', 'start', 'duplika-cloudlinux-observer.service'], timeout=60)
+            health = load(CLOUD_DATA / 'private/collector-health.json')
+            if not 0 <= time.time() - health.get('at', 0) < 180 or 'failed' in health.get('components', {}).values():
+                raise RuntimeError('upgrade:first_cycle_not_healthy')
             execute(['systemctl', 'start', observer_timer])
         activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
-            [name for name in old['services'] if name != NAME + '.timer'],
-            old['oneshots'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'], old.get('migration_review'), storage_enabled=add_storage)
+            [name for name in old['services'] if name not in (NAME + '.timer', 'duplika-storage-observer.timer')],
+            [name for name in old['oneshots'] if name != 'duplika-storage-observer.service'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'], old.get('migration_review'), storage_enabled=add_storage or had_storage, storage_preserved=had_storage)
     except BaseException as error:
         recover_failure(transaction, error)
         raise
