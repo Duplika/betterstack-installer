@@ -476,6 +476,64 @@ def validate_bootstrap_recovery(target):
     return failure
 
 
+# Passed as code rather than a file: ProtectHome hides the temporary /root stage.
+RESOURCE_PROBE = r"""
+import json, subprocess, sys, time
+from pathlib import Path
+started = time.monotonic()
+result = {'status': 'failed'}
+try:
+    Path('/proc/stat').read_text()
+    Path('/proc/self/stat').read_text()
+    args = [sys.argv[1], '--json', '--order-by=cpu', '--max=10000']
+    if sys.argv[2] == 'domains':
+        args.append('--domains')
+    response = subprocess.run(args, capture_output=True, text=True, timeout=40,
+        env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
+    data = json.loads(response.stdout)
+    if response.returncode or data.get('result') != 'success' or not isinstance(data.get('users'), list):
+        raise ValueError('invalid_lve_response')
+    result = {'status': 'ok', 'accounts_observed': len(data['users'])}
+except subprocess.TimeoutExpired:
+    result['error'] = 'lve_timeout'
+except Exception:
+    result['error'] = 'lve_probe_failed'
+result['duration_seconds'] = round(time.monotonic() - started, 2)
+print('duplika_preflight=' + json.dumps(result), flush=True)
+sys.exit(0 if result['status'] == 'ok' else 1)
+"""
+
+
+def resource_preflight(caps):
+    """One transient, bounded probe. Never installed as a periodic service."""
+    if caps['lve_status'] != 'available':
+        return
+    systemd = trusted_executable('systemd-run')
+    cloudtop = trusted_executable('cloudlinux-top')
+    if not systemd or not cloudtop or cloudtop != caps['cloudlinux_top']:
+        raise RuntimeError('preflight:resource_probe_executable_unavailable')
+    args = [systemd, '--quiet', '--wait', '--pipe', '--collect',
+        '-p', 'ProtectSystem=strict', '-p', 'ProtectHome=true',
+        '-p', 'PrivateTmp=true', '-p', 'NoNewPrivileges=true',
+        '-p', 'CPUAccounting=true', '-p', 'MemoryAccounting=true',
+        '-p', 'CPUQuota=10%', '-p', 'MemoryMax=256M', '-p', 'Nice=15',
+        '-p', 'IOSchedulingClass=idle', '-p', 'TimeoutStartSec=50',
+        sys.executable, '-I', '-c', RESOURCE_PROBE, cloudtop,
+        'domains' if caps['isolates_supported'] else 'users']
+    try:
+        response = run(args, timeout=55)
+        summaries = [line.split('=', 1)[1] for line in response.stdout.splitlines()
+                     if line.startswith('duplika_preflight=')]
+        result = json.loads(summaries[-1]) if len(summaries) == 1 else {}
+    except Exception:
+        raise RuntimeError('preflight:resource_probe_failed_before_install') from None
+    if response.returncode or result.get('status') != 'ok':
+        reason = 'lve_timeout' if result.get('error') == 'lve_timeout' else 'resource_probe_failed'
+        raise RuntimeError('preflight:' + reason + '_before_install')
+    print(json.dumps({'preflight_resources': result, 'cpu_quota': '10%',
+        'lve_timeout_seconds': 40, 'persistent_changes_applied': False}))
+
+
 def base_preflight(target):
     with tempfile.TemporaryDirectory(prefix='duplika-preflight4-', dir='/root') as folder:
         stage = Path(folder)
@@ -486,6 +544,7 @@ def base_preflight(target):
         if response.returncode:
             print((response.stdout + '\n' + response.stderr)[-6000:], file=sys.stderr)
             raise RuntimeError('preflight:base_checks_failed')
+        resource_preflight(detect())
 
 
 def fresh(target, caps, credential, recover_bootstrap=False):
@@ -500,6 +559,7 @@ def fresh(target, caps, credential, recover_bootstrap=False):
         raise RuntimeError('install:invalid_source_credential')
     if (LEGACY / 'manifest.json').exists() or Path('/etc/duplika-betterstack').exists() or Path('/etc/vector/duplika-profile.json').exists():
         raise RuntimeError('install:legacy_layout_detected_use_upgrade')
+    resource_preflight(caps)
     write(STATE / 'install-pending.json', identity.canonical({'phase': 'base_installing', 'target': target}))
     with tempfile.TemporaryDirectory(prefix='duplika-install4-', dir='/root') as folder:
         stage = Path(folder)
@@ -568,7 +628,7 @@ def validate_v4_upgrade(target, caps):
                          '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json',
                          '4.0.0-rc13': 'upgrade_rc13.json', '4.0.0-rc15': 'upgrade_rc15.json',
                          '4.0.0-rc10': 'upgrade_rc10.json', '4.0.0-rc17': 'upgrade_rc17.json',
-                         '4.0.0-rc18': 'upgrade_rc18.json'}
+                         '4.0.0-rc18': 'upgrade_rc18.json', '4.0.0-rc19': 'upgrade_rc19.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -585,7 +645,7 @@ def validate_v4_upgrade(target, caps):
         import legacy_upgrade
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18')
+    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -669,7 +729,7 @@ def upgrade_v4(target, caps):
     identity.status(quiet=True)  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18')
+    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:

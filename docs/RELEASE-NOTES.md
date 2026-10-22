@@ -187,3 +187,8 @@ rc16 queda sustituida para el piloto: su comprobación inicial podía intentar i
 rc17 mantiene la política eficiente de rc16 y, tras pausar el timer y reemplazar el código bajo lock, espera hasta60s a que la unidad esté inactiva antes de arrancar la nueva ejecución. No mata ciclos. Estado fallido/desconocido o timeout aborta con error específico/reversión. El marker ahora lleva versión del código y hora de inicio; se exige que sea de la versión nueva, haya comenzado después de iniciar el reemplazo, esté fresco y contenga procesos/LVE/accesos sin componentes fallidos. Un fichero viejo, incompleto o ausente no certifica éxito.
 
 No instalar rc16 ni forzar/rebaselinar un upgrade fallido. Si la reversión automática dejó rc15 completa/saludable, preflight y upgrade rc17 con el mismo perfil; sin rollback manual,credential,install ni cambios de fuente. La validación del destino/baseline determina si se puede continuar. Configuración Vector,almacenamiento,cadencias/política de logs y límites sin cambios respecto a rc16. La aceptación remota sigue pendiente; no extrapolar simulaciones a producción.
+
+
+### 4.0.0-rc20 — bounded resource preflight for new installations
+
+Run a transient systemd LVE and basic /proc probe during fresh preflight and again before bootstrap mutation, using the collector CPU/memory/privacy constraints. Fail early on timeout, malformed output or unavailable sandbox. Report only counts and elapsed time. Skip on systems without LVE. Preserve real first-cycle health checks, all existing sampling and log policies. Add reviewed rc19 upgrade hashes; historical released artifacts remain unchanged. Native acceptance on a new host is required; no stable promotion.

@@ -166,3 +166,12 @@ rc16 queda sustituida para el piloto: su comprobación inicial podía intentar i
 rc17 mantiene la política eficiente de rc16 y, tras pausar el timer y reemplazar el código bajo lock, espera hasta60s a que la unidad esté inactiva antes de arrancar la nueva ejecución. No mata ciclos. Estado fallido/desconocido o timeout aborta con error específico/reversión. El marker ahora lleva versión del código y hora de inicio; se exige que sea de la versión nueva, haya comenzado después de iniciar el reemplazo, esté fresco y contenga procesos/LVE/accesos sin componentes fallidos. Un fichero viejo, incompleto o ausente no certifica éxito.
 
 No instalar rc16 ni forzar/rebaselinar un upgrade fallido. Si la reversión automática dejó rc15 completa/saludable, preflight y upgrade rc17 con el mismo perfil; sin rollback manual,credential,install ni cambios de fuente. La validación del destino/baseline determina si se puede continuar. Configuración Vector,almacenamiento,cadencias/política de logs y límites sin cambios respecto a rc16. La aceptación remota sigue pendiente; no extrapolar simulaciones a producción.
+
+
+## rc20: prueba de recursos antes de instalar
+
+En altas nuevas con LVE disponible, preflight consulta cloudlinux-top en una unidad transitoria de systemd: CPUQuota10%, MemoryMax256M, Nice15, IOidle, ProtectSystem=strict, ProtectHome=true, PrivateTmp y NoNewPrivileges. Verifica lectura básica de /proc y la respuesta JSON/result/users de LVE, con40s de límite para LVE y50s para la unidad. Sólo imprime duración y cantidad de cuentas devueltas, nunca usuarios o datos de procesos. Las cuentas devueltas son las observadas por la consulta, no el total de cPanel.
+
+La instalación repite la prueba justo antes del marcador base_installing y antes de paquetes/usuario/configuración/servicios persistentes del agente, para no confiar en una comprobación antigua. Un fallo detiene el alta; no eleva cuotas ni instala una sonda periódica. La unidad transitoria se recoge automáticamente. No instala paquetes en preflight, ni elimina las verificaciones del primer ciclo real del agente. Sistemas sin LVE omiten esta prueba. No prueba el recorrido completo de procesos por cuenta, la lectura de logs ni el envío remoto.
+
+Las actualizaciones conservan su comprobación del primer ciclo y no ejecutan esta prueba de altas. rc20 admite también rc19 con hashes revisados; no cambia frecuencias, presupuestos de lectura ni política de logs/métricas frente a rc19. No obliga a actualizar servidores ya aceptados sólo por esta mejora del alta.

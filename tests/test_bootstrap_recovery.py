@@ -62,7 +62,7 @@ class BootstrapRecoveryTests(unittest.TestCase):
         with patch.object(installer,'run',side_effect=run):
             transaction=installer.backup([self.pending,self.failure],[])
             with self.assertRaisesRegex(RuntimeError,'stop before native'):
-                installer.fresh(TARGET,{'os_id':'cloudlinux'},credential,recover_bootstrap=True)
+                installer.fresh(TARGET,{'os_id':'cloudlinux','lve_status':'not_supported'},credential,recover_bootstrap=True)
         self.assertEqual(credential.read_bytes(),before)
         self.assertIn(str(self.failure),transaction['files'])
         self.assertFalse(installer.CLOUD.exists())
