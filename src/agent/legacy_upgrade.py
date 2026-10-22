@@ -19,7 +19,7 @@ def validate(api, old, target):
     if variant not in known:
         raise RuntimeError('upgrade:unreviewed_legacy_variant')
     version, config, profile, helper, blueprint, reference, services = known[variant]
-    if (old['agent_version'] != version or old.get('storage_observer')
+    if (old['agent_version'] not in (version, '4.0.0-rc18') or old.get('storage_observer')
             or old.get('config_path') != config or old.get('profile_path') != profile
             or old.get('services') != services + [api.NAME + '.timer']
             or old.get('oneshots') != [services[1][:-6] + '.service']

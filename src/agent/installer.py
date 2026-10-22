@@ -546,6 +546,19 @@ def observer_base_paths():
                 'duplika-cloudlinux-observer.service', 'duplika-cloudlinux-observer.timer')]]
 
 
+def validate_observer_profile(meta, profile):
+    previous = meta['agent_version']
+    if previous in ('4.0.0-rc3', '4.0.0-rc4', '4.0.0-rc5'):
+        return  # Historical identity-only routes; profile is not rewritten.
+    allowed = {previous}
+    if previous in ('4.0.0-rc6', '4.0.0-rc7'):
+        # rc4..rc7 upgraded identity only and kept the original profile bytes.
+        # Caller first checks official collector/runtime hashes and full baseline.
+        allowed = {'4.0.0-rc' + str(n) for n in range(3, int(previous.split('rc')[1]) + 1)}
+    if profile.get('agent_version') not in allowed:
+        raise RuntimeError('upgrade:observer_profile_version_mismatch')
+
+
 def validate_v4_upgrade(target, caps):
     """Only reviewed, complete candidate observer layouts can migrate."""
     old = load(BASE / 'manifest.json')
@@ -554,7 +567,8 @@ def validate_v4_upgrade(target, caps):
                          '4.0.0-rc5': 'upgrade_rc5.json', '4.0.0-rc6': 'upgrade_rc6.json',
                          '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json',
                          '4.0.0-rc13': 'upgrade_rc13.json', '4.0.0-rc15': 'upgrade_rc15.json',
-                         '4.0.0-rc10': 'upgrade_rc10.json', '4.0.0-rc17': 'upgrade_rc17.json'}
+                         '4.0.0-rc10': 'upgrade_rc10.json', '4.0.0-rc17': 'upgrade_rc17.json',
+                         '4.0.0-rc18': 'upgrade_rc18.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -571,7 +585,7 @@ def validate_v4_upgrade(target, caps):
         import legacy_upgrade
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17')
+    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -591,8 +605,7 @@ def validate_v4_upgrade(target, caps):
             raise RuntimeError('upgrade:unreviewed_v4_runtime')
     if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
         raise RuntimeError('upgrade:v4_drift')
-    if previous in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17') and load(CLOUD / 'profile.json').get('agent_version') != previous:
-        raise RuntimeError('upgrade:observer_profile_version_mismatch')
+    validate_observer_profile(old, load(CLOUD / 'profile.json'))
     vector = trusted_executable('vector')
     if not vector or Path(old['vector_binary']).resolve() != Path(vector).resolve():
         raise RuntimeError('upgrade:vector_binary_mismatch')
@@ -656,7 +669,7 @@ def upgrade_v4(target, caps):
     identity.status(quiet=True)  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17')
+    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
@@ -674,8 +687,7 @@ def upgrade_v4(target, caps):
                 if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
                     raise RuntimeError('upgrade:v4_changed_while_waiting')
                 profile = load(CLOUD / 'profile.json')
-                if profile.get('agent_version') != old['agent_version']:
-                    raise RuntimeError('upgrade:observer_profile_version_mismatch')
+                validate_observer_profile(old, profile)
                 first_cycle_after = time.time()
                 write(CLOUD / 'collector.py', (HERE / 'collector.py').read_bytes(), 0o700)
                 profile['agent_version'] = VERSION

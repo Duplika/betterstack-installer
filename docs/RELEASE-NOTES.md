@@ -1,3 +1,13 @@
+# 4.0.0-rc19 — candidata: perfiles conservados por actualizaciones antiguas
+
+Corrige el rechazo observer_profile_version_mismatch de rc18 al revisar una instalación rc6/rc7 que conserva un perfil anterior. Las actualizaciones oficiales rc4..rc7 reemplazaban identidad/mantenimiento, pero no reescribían el perfil del recolector. La versión instalada y la del perfil podían diferir legítimamente.
+
+Sólo para identidad rc6/rc7 se admite la versión original del perfil rc3..rc6 o rc3..rc7, respectivamente. Antes se exige coincidencia del runtime/colector con el artefacto oficial y de todos los archivos/configuración con la baseline existente. No se modifica ni recertifica el perfil para pasar preflight. Versiones desconocidas, ausentes o futuras siguen rechazándose. La misma regla se repite bajo lock antes de actualizar. Para versiones posteriores se conserva la igualdad estricta.
+
+Añade ruta revisada desde rc18, con hashes del payload original y preservación del almacenamiento/pipeline existentes. No es necesario volver a actualizar de inmediato los hosts rc18 ya aceptados: la política del agente es la misma. rc18 se conserva inmutable; no usar para continuar las rutas rc6/rc7.
+
+Incluye regresión rc3→identidad rc6/rc7 con perfil intacto, rechazo de drift/perfiles desconocidos/futuros, actualización/reversión y transición desde payload rc18 real. Sin cambios de política, cadencias, recursos, Vector, fuente o credenciales. Sólo cambia la marca de release del colector. Aceptación nativa/remota de rc19 pendiente.
+
 # 4.0.0-rc18 — candidata: actualización revisada y procedimiento más corto
 
 Admite observer-v4 rc10 y rc17 además de las rutas previas. Desde rc6/rc7/rc10/rc12/rc13 refresca el colector a la política de recursos cada300s y logs de incidentes, añade almacenamiento si falta y exige una ejecución nueva saludable. rc15/rc17 conservan su almacenamiento existente. Verifica payloads originales, destino/capacidades, configuración, baseline y servicios. Fuente/token/Vector/cursores/buffers se conservan. rc3/rc4/rc5 mantienen su ruta histórica de identidad; no atribuirles la política eficiente sin revisión específica.

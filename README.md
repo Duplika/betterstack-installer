@@ -2,7 +2,7 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 8 y 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc18 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc19 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 **No usar rc8:** se conserva como artefacto histórico; su escritura de permisos y reversión tienen fallos corregidos en rc9.
 
@@ -20,12 +20,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc18/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc19/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc18/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc19/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -65,7 +65,7 @@ bash /root/installer.sh verify
 
 En una instalación v4 completa, el destino se toma del manifiesto instalado y se valida contra el servidor. `--target /ruta/perfil.json` sigue disponible si se quiere comprobar un perfil explícito. La publicación de identidad al finalizar es automática; no ejecutar otro `systemctl start`.
 
-Las rutas revisadas se detallan en [notas de rc18](docs/RELEASE-NOTES.md). Observer-v4 rc6/rc7/rc10/rc12/rc13 incorpora política eficiente y almacenamiento; rc15/rc17 conserva almacenamiento y refresca código. Los dos layouts heredados AlmaLinux conservan el pipeline anterior, comparado con su blueprint y auxiliares oficiales, y actualizan identidad/mantenimiento. No confundir identidad nueva con funcionalidades no instaladas en un pipeline heredado. Versiones/layouts desconocidos o con drift se rechazan, sin reinstalar ni recertificar diferencias.
+Las rutas revisadas y la corrección de perfiles antiguos se detallan en [notas de rc19](docs/RELEASE-NOTES.md). Observer-v4 rc6/rc7/rc10/rc12/rc13 incorpora política eficiente y almacenamiento; rc15/rc17 conserva almacenamiento y refresca código. Los dos layouts heredados AlmaLinux conservan el pipeline anterior, comparado con su blueprint y auxiliares oficiales, y actualizan identidad/mantenimiento. No confundir identidad nueva con funcionalidades no instaladas en un pipeline heredado. Versiones/layouts desconocidos o con drift se rechazan, sin reinstalar ni recertificar diferencias.
 
 `rollback` restaura la última transacción de upgrade sin retroceder checkpoints. `resume` sólo finaliza v4 si una instalación nueva dejó la base completa y su snapshot coincide; no repara estados parciales desconocidos. Migraciones entre versiones v4 distintas necesitan revisión específica.
 

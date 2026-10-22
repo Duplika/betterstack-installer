@@ -423,3 +423,33 @@ class Rc7UpgradeTests(Rc12UpgradeTests):
 
 class Rc10UpgradeTests(Rc12UpgradeTests):
     previous_version = '4.0.0-rc10'
+
+
+class EarlyIdentityOnlyProfileTests(Rc6UpgradeTests):
+    def setUp(self):
+        super().setUp()
+        # Native installation history: rc3 base, then identity-only rc4/5/6.
+        (installer.CLOUD / 'profile.json').write_text(json.dumps({'agent_version':'4.0.0-rc3'}))
+        self.meta['baseline'] = identity.snapshot(self.meta['critical_paths'], self.meta['config_path'])
+        self.save_meta()
+
+    def test_unknown_or_future_profile_versions_still_rejected(self):
+        for version in (None, '4.0.0-rc1', '4.0.0-rc7', '4.0.0-rc18', 'changed'):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(RuntimeError,'profile_version_mismatch'):
+                    installer.validate_observer_profile(self.meta, {'agent_version':version})
+
+    def test_preserved_historical_profile_cannot_hide_actual_drift(self):
+        (installer.CLOUD / 'profile.json').write_text(json.dumps({'agent_version':'4.0.0-rc4'}))
+        with self.assertRaisesRegex(RuntimeError,'v4_drift'):
+            installer.validate_v4_upgrade(TARGET,self.caps)
+
+
+class Rc7IdentityOnlyProfileTests(EarlyIdentityOnlyProfileTests):
+    previous_version = '4.0.0-rc7'
+
+    def test_unknown_or_future_profile_versions_still_rejected(self):
+        for version in (None, '4.0.0-rc1', '4.0.0-rc8', '4.0.0-rc18', 'changed'):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(RuntimeError,'profile_version_mismatch'):
+                    installer.validate_observer_profile(self.meta, {'agent_version':version})

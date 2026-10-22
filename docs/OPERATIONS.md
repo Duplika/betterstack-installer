@@ -1,4 +1,6 @@
-# Procedimiento actual rc18
+# Procedimiento actual rc19
+
+No usar rc18 para continuar actualizaciones rc6/rc7: rc19 contempla perfiles originales conservados por actualizaciones de identidad. Un fallo de preflight por versión del perfil no autoriza editarlo ni rebaselinar.
 
 Tras descarga fijada y hash verificado: `preflight`, `upgrade`, `verify`. El destino instalado se detecta automáticamente; un perfil explícito sigue validándose si se suministra. No hace falta solicitar token otra vez, reinstalar, borrar spool/offsets ni iniciar identidad manualmente. Si ya está actualizado, verifica salud/código/capacidades y no cambia archivos.
 

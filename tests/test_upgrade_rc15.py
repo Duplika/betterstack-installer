@@ -108,3 +108,7 @@ class UpgradeTests(unittest.TestCase):
 
 class Rc17UpgradeTests(UpgradeTests):
     previous_version = "4.0.0-rc17"
+
+
+class Rc18UpgradeTests(UpgradeTests):
+    previous_version = "4.0.0-rc18"
