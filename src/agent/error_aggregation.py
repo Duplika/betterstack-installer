@@ -3,7 +3,8 @@ import copy
 
 LEGACY_MARKER = 'minimal_errors_5m_v21'
 RC22_MARKER = 'minimal_errors_5m_v22'
-MARKER = 'minimal_errors_5m_v23'
+RC23_MARKER = 'minimal_errors_5m_v23'
+MARKER = 'minimal_errors_5m_v24'
 LEGACY_CONDITION = 'includes(["lsapi_abort", "sql_commands_out_of_sync"], .event_kind) && .level != "critical"'
 RC22_CONDITION = '''event_time, time_error = parse_timestamp(to_string(.dt) ?? "", format: "%+")
 ''' + LEGACY_CONDITION + ' && time_error == null && is_timestamp(event_time)'
@@ -70,7 +71,7 @@ CONDITION = RC22_CONDITION + ' && .timestamp_unparsed != true'
 def prepare(original, marker=MARKER):
     if marker == LEGACY_MARKER:
         return prepare_v21(original)
-    if marker not in (RC22_MARKER, MARKER):
+    if marker not in (RC22_MARKER, RC23_MARKER, MARKER):
         raise RuntimeError('aggregation:unknown_review_marker')
     config = prepare_v22(original)
     if marker == RC22_MARKER:
@@ -79,12 +80,23 @@ def prepare(original, marker=MARKER):
     transforms['repeat_route']['route']['repeat'] = CONDITION
     transforms['repeat_summary']['source'] = transforms['repeat_summary']['source'].replace(
         'parse_timestamp!(string!(.dt), format: "%+")', 'parse_timestamp!(to_string!(.dt), format: "%+")')
+    if marker == RC23_MARKER:
+        return config
+    # Wall-clock expiry alone cannot bound the span of original event dates.
+    # Fixed UTC event-time buckets also separate late and out-of-order events.
+    # Epoch seconds are exact here; floor handles dates before the epoch too.
+    transforms['repeat_summary']['source'] = transforms['repeat_summary']['source'].replace(
+        '. = {"first_seen_us": event_us,',
+        'bucket = floor(to_float(to_unix_timestamp(event_time)) / 300.0)\n'
+        '. = {"aggregation_bucket": bucket, "first_seen_us": event_us,')
+    transforms['repeat_reduce']['group_by'].append('aggregation_bucket')
+    transforms['repeat_dates']['source'] += '\ndel(.aggregation_bucket)\n'
     return config
 
 
 def replace_reviewed(config, marker):
     """Replace only a byte-equivalent reviewed graph; never adopt drift."""
-    if marker not in (LEGACY_MARKER, RC22_MARKER):
+    if marker not in (LEGACY_MARKER, RC22_MARKER, RC23_MARKER):
         raise RuntimeError('aggregation:unknown_review_marker')
     original = copy.deepcopy(config)
     output = 'repeat_reduce' if marker == LEGACY_MARKER else 'repeat_dates'
@@ -92,7 +104,7 @@ def replace_reviewed(config, marker):
         raise RuntimeError('aggregation:unexpected_legacy_sink')
     original['sinks']['duplika_logs']['inputs'] = ['useful_errors']
     keys = ['repeat_route', 'repeat_summary', 'repeat_reduce']
-    if marker == RC22_MARKER:
+    if marker in (RC22_MARKER, RC23_MARKER):
         keys.append('repeat_dates')
     for key in keys:
         original['transforms'].pop(key, None)
@@ -111,7 +123,7 @@ def validate_plan(api, old):
         raise RuntimeError('aggregation:requires_reviewed_minimal_v4')
     config = api.load(old['config_path'])
     marker = old.get('migration_review', {}).get('error_aggregation')
-    if marker in (LEGACY_MARKER, RC22_MARKER):
+    if marker in (LEGACY_MARKER, RC22_MARKER, RC23_MARKER):
         config = replace_reviewed(config, marker)
     elif marker is None:
         config = prepare(config)

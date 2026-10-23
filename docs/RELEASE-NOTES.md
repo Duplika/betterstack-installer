@@ -1,3 +1,11 @@
+# 4.0.0-rc24 — candidata: grupos acotados por fecha original
+
+Corrige la agrupación opcional minimal-v4: los temporizadores de llegada de rc21–rc23 no garantizaban una distancia máxima de 300 segundos entre fechas originales. rc24 agrupa además por ventana fija UTC de cinco minutos calculada desde la fecha original. Conserva precisión de microsegundos y cantidades; cada resumen abarca menos de 300 segundos. Una llegada tardía puede emitir otro resumen para una ventana anterior: sumar occurrences, no contar filas. La clave interna se elimina antes de enviar. El tiempo de recepción sigue sujeto a los temporizadores y al transporte.
+
+Sólo LSAPI abort y SQL Commands out of sync no críticos se agrupan. Críticos, otros errores y fechas no interpretadas pasan íntegros. No elimina lectores ni agrega sondeos, cron o contexto cPanel. No modifica filtros, fuentes, credenciales, métricas, buffers ni checkpoints. Los resúmenes siguen teniendo estado en memoria, sin garantía de auditoría y sin corregir la causa de aplicación.
+
+La migración explícita --aggregate-errors reconoce el payload y el grafo originales rc23 además de rc21/rc22; rechaza drift. Reinicia únicamente Vector. Las pruebas nativas del lector completo verifican ráfagas tardías, orden alterado, offsets UTC, bordes exactos con microsegundos, conteos, rutas críticas y cierre del temporizador con la entrada abierta. El caso de borde falla contra el grafo rc23 congelado. Pruebas de migración y reversión preservan configuración ajena, permisos y cursores. Los artefactos previos quedan inmutables. Candidata pendiente de aceptación remota.
+
 # 4.0.0-rc23 — candidata: fechas nativas del lector y conteos completos
 
 Sustituye la agrupación opcional rc22. La normalización heredada entrega dt como timestamp nativo de VRL. rc22 sólo probaba fechas JSON en texto: su aserción string!(.dt) abortaba el remap y el evento original continuaba hacia reduce, sin occurrences ni first_seen/last_seen. Las métricas del host y los lectores seguían funcionando, pero no debía considerarse validada esa agrupación.
