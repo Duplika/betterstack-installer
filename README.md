@@ -2,7 +2,7 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 8 y 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc19 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc24 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 **No usar rc8:** se conserva como artefacto histórico; su escritura de permisos y reversión tienen fallos corregidos en rc9.
 
@@ -20,12 +20,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc19/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc24/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc19/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc24/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -186,8 +186,27 @@ Las actualizaciones conservan su comprobación del primer ciclo y no ejecutan es
 
 `preflight --aggregate-errors` y `upgrade --aggregate-errors` seleccionan una migración revisada exclusivamente para `almalinux-wordpress-minimal-v4`. Debe seleccionarse durante el cambio de versión. Sin esa opción, el transporte heredado se conserva.
 
-Agrupa únicamente `lsapi_abort` y `sql_commands_out_of_sync` no críticos, por host, servicio, sitio, virtual host, nivel y tipo de aborto. Emite resúmenes con `occurrences`, `first_seen` y `last_seen` cada cinco minutos como máximo; elimina SQL, mensajes repetidos y PIDs del resumen. Los eventos críticos y los demás tipos atraviesan la ruta sin agregación. Las consultas de frecuencia deben sumar `occurrences` para los resúmenes; contar filas ya no representa el número de errores.
+Agrupa únicamente `lsapi_abort` y `sql_commands_out_of_sync` no críticos, por host, servicio, sitio, virtual host, nivel y tipo de aborto. Desde rc24 separa ventanas fijas UTC de cinco minutos por fecha original y emite resúmenes con `occurrences`, `first_seen` y `last_seen`; elimina SQL, mensajes repetidos y PIDs del resumen. Los eventos críticos y los demás tipos atraviesan la ruta sin agregación. Las consultas de frecuencia deben sumar `occurrences` para los resúmenes; contar filas ya no representa el número de errores.
 
 Se valida el grafo con el Vector instalado antes de modificarlo y se guarda una transacción para rollback. Se conserva propietario y modo de la configuración, fuentes, buffers y métricas. El estado temporal del reduce reside en memoria: una terminación abrupta puede perder los conteos todavía no emitidos; no es un registro de auditoría. La agrupación reduce ruido, no corrige la causa de los errores de aplicación.
 
 Validación: pruebas de actualización desde payloads publicados, ausencia de replay de métricas, límites de detalles, reinicios del estado, recuperación de cobertura, rollback de la migración, grafo nativo Vector y conteos/expiración/bypass de críticos con entradas sintéticas. Requiere piloto y recepción remota antes de ampliar el despliegue.
+
+
+## Historial: corrección de agrupación opcional rc22
+
+Para una base minimal-v4 con agrupación rc21, usar `preflight --aggregate-errors`, `upgrade --aggregate-errors` y `verify` del instalador rc24 fijado y verificado. Sólo la opción explícita migra el grafo. Conserva conteos y fechas originales en UTC, incluso fuera de orden; errores con fechas inválidas se envían completos. Reinicia únicamente Vector para aplicar la configuración. No reescribe historial ni recupera fechas ya descartadas. Los grupos en memoria no son auditoría. Los observer-v4 sin esa agrupación pueden permanecer en rc21.
+
+
+## Corrección de fechas tipadas rc23
+
+**La agrupación opcional rc22 debe reemplazarse por rc24.** Su prueba sólo cubría fechas en texto y no el timestamp VRL que entrega el lector real. rc23 prueba el parser/filtro original junto al agrupador y conserva tanto conteos como fechas. Usar el instalador rc24 fijado y verificado con `preflight --aggregate-errors`, `upgrade --aggregate-errors` y `verify`. La actualización sin esa opción conserva el grafo previo. Los observer-v4 sin agrupación opcional pueden continuar en rc21.
+
+
+## rc24: límite estricto de fecha original en los grupos
+
+La agrupación opcional rc21–rc23 dependía sólo del tiempo de llegada y podía mezclar fechas originales separadas por más de 300 segundos. rc24 añade una clave interna por ventana UTC fija de cinco minutos. Un resumen no puede cruzar ese límite; first_seen/last_seen abarcan menos de 300 segundos, incluso con eventos tardíos o fuera de orden. Un evento tardío puede generar otro resumen de la misma ventana: las consultas deben sumar occurrences. La clave interna no se exporta.
+
+El temporizador de emisión sigue siendo de 300 segundos y puede tener demora de planificación, lectura y envío; no es una garantía de recepción en tiempo real. No espera a completar una ventana de fecha original ni reabre resúmenes ya emitidos. Los críticos, otros tipos y fechas no interpretadas pasan íntegros. Conserva lectores, métricas, filtros y checkpoints. No activa cron ni contexto cPanel.
+
+Para corregir una base minimal-v4 rc21/rc22/rc23 revisada, ejecutar preflight y upgrade con --aggregate-errors y luego verify. Sin esa opción conserva el grafo existente. Sólo Vector se reinicia para aplicar el grafo; no se reinician aplicaciones. Candidata pendiente de recepción remota después de instalar. Los observer-v4 aceptados en rc21 no requieren esta corrección.
