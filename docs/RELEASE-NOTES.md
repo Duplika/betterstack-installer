@@ -1,3 +1,15 @@
+# 4.0.0-rc22 — candidata: fechas originales en resúmenes de errores
+
+Corrige la agrupación opcional de rc21 para el transporte heredado minimal-v4. Vector reduce sólo acepta números en min/max; rc21 descartaba dt, first_seen y last_seen al recibir fechas ISO como texto. Los conteos se conservaban, pero Better Stack usaba una fecha de recepción en lugar de la fecha original.
+
+rc22 convierte las fechas a enteros de microsegundos antes de reducir y reconstruye dt/first_seen/last_seen en UTC después. dt corresponde al primer evento. Conserva el conteo, separación por sitio/tipo/gravedad y cierre de hasta300s. Soporta eventos fuera de orden y distintas zonas horarias. Fechas inválidas o ausentes pasan por la ruta completa sin agrupar; no se inventan fechas originales. Los críticos y demás eventos siguen pasando completos.
+
+`preflight --aggregate-errors` y `upgrade --aggregate-errors` reconocen el artefacto original rc21, verifican su runtime, configuración exacta e integridad y sustituyen sólo el grafo de agrupación revisado. Conservan fuentes, lectores, credenciales, métricas, data_dir, buffers y cursores. Reinician únicamente Vector para aplicar el grafo; hay respaldo/reversión de configuración y unidades. Los grupos aún en memoria no son un registro de auditoría. No se recuperan fechas ya descartadas por resúmenes antiguos.
+
+La actualización sin esa opción conserva el grafo heredado existente; no activar la agrupación implícitamente. Los servidores observer-v4 en rc21 no necesitan esta corrección. rc21 y todas las releases anteriores permanecen inmutables.
+
+Pruebas nativas de Vector0.60.0 verifican fechas exactas y precisión de microsegundos, entrada fuera de orden/offsets UTC, conteos, sitios separados, cierre por temporizador con entrada abierta, bypass crítico/fechas inválidas y ausencia de advertencias de combinación. Las pruebas con el payload rc21 original verifican migración explícita, preservación de permisos/propietarios/métricas/cursores, rechazo de drift y reversión ante fallo de transporte. Candidata pendiente de aceptación remota en destino.
+
 # 4.0.0-rc19 — candidata: perfiles conservados por actualizaciones antiguas
 
 Corrige el rechazo observer_profile_version_mismatch de rc18 al revisar una instalación rc6/rc7 que conserva un perfil anterior. Las actualizaciones oficiales rc4..rc7 reemplazaban identidad/mantenimiento, pero no reescribían el perfil del recolector. La versión instalada y la del perfil podían diferir legítimamente.

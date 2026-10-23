@@ -42,22 +42,24 @@ def check_aggregation(vector, config):
     transforms['repeat_reduce'].update(expire_after_ms=100, end_every_period_ms=100, flush_period_ms=20)
     graph = {'sources': {'input': {'type':'stdin','decoding':{'codec':'json'}}},
              'transforms':transforms,
-             'sinks':{'output':{'type':'console','inputs':['repeat_reduce','repeat_route._unmatched'],
+             'sinks':{'output':{'type':'console','inputs':['repeat_dates','repeat_route._unmatched'],
                                 'encoding':{'codec':'json'},'target':'stdout'}}}
-    def row(kind, level='warning', site='example.net'):
-        return {'dt':'2026-01-01T00:00:00Z','host':'cloud.example.net','service':'application',
+    def row(kind, level='warning', site='example.net', at='2026-01-01T00:00:00Z'):
+        return {'dt':at,'host':'cloud.example.net','service':'application',
                 'site':site,'event_kind':kind,'level':level,'message':'PRIVATE_SQL_DIAGNOSTIC'}
     with tempfile.TemporaryDirectory() as folder:
         path=Path(folder)/'config.json';path.write_text(json.dumps(graph))
         proc=subprocess.Popen([vector,'--config-json',str(path)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-        for event in [row('lsapi_abort')]*3+[row('sql_commands_out_of_sync')]*2+[row('lsapi_abort',site='other.example.net'),row('native_crash','critical'),row('lsapi_abort','critical')]:
+        for event in [row('lsapi_abort', at='2026-01-01T00:00:02.123456Z'),
+                      row('lsapi_abort', at='2025-12-31T21:00:01.123456-03:00'),
+                      row('lsapi_abort', at='2026-01-01T00:00:03.123456Z')]+[row('sql_commands_out_of_sync')]*2+[row('lsapi_abort',site='other.example.net'),row('native_crash','critical'),row('lsapi_abort','critical'),row('lsapi_abort',at='invalid timestamp'),row('sql_commands_out_of_sync',at=None)]:
             proc.stdin.write(json.dumps(event)+'\n')
         proc.stdin.flush()
         rows=[]; expired=threading.Event()
         def read_output():
             for line in proc.stdout:
                 rows.append(json.loads(line))
-                if len(rows) >= 5:expired.set()
+                if len(rows) >= 7:expired.set()
         reader=threading.Thread(target=read_output,daemon=True);reader.start()
         try:
             assert expired.wait(10), 'Native timer did not flush while input remained open'
@@ -73,7 +75,18 @@ def check_aggregation(vector, config):
         assert len([r for r in rows if r['level']=='critical'])==2
         assert all('PRIVATE_SQL_DIAGNOSTIC' not in json.dumps(r) for r in summaries)
         assert all(r['aggregation_seconds']==300 for r in summaries)
-    print('Native aggregation: counts, grouping, timer flush, critical bypass and payload minimization passed.')
+        for expected in (row('lsapi_abort', at='invalid timestamp'), row('sql_commands_out_of_sync', at=None)):
+            assert any(all(actual.get(k) == v for k, v in expected.items())
+                       and 'occurrences' not in actual for actual in rows), rows
+        for row_ in summaries:
+            assert row_['dt'] == row_['first_seen'], row_
+            assert row_['first_seen'] <= row_['last_seen'], row_
+            assert 'first_seen_us' not in row_ and 'last_seen_us' not in row_, row_
+        combined = next(r for r in summaries if r['occurrences'] == 3)
+        assert combined['first_seen'] == '2026-01-01T00:00:01.123456Z', combined
+        assert combined['last_seen'] == '2026-01-01T00:00:03.123456Z', combined
+        assert 'Failed to create value merger' not in stderr, stderr
+    print('Native aggregation: exact event dates, out-of-order/offset input, counts, grouping, timer flush, critical bypass and payload minimization passed.')
 
 
 if __name__ == '__main__':
