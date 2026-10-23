@@ -21,6 +21,7 @@ class Rc21ObserverUpgradeTests(UpgradeTests):
 
 
 class Rc21AggregationTests(MinimalLegacyTests):
+    installed_marker = a.LEGACY_MARKER
     def setUp(self):
         super().setUp()
         script = (Path(__file__).parents[1] / 'releases/4.0.0-rc21/installer.sh').read_text()
@@ -34,7 +35,7 @@ class Rc21AggregationTests(MinimalLegacyTests):
         self.old_config = self.original_module['prepare'](self.plain)
         self.path.write_text(json.dumps(self.old_config))
         self.meta.update(agent_version='4.0.0-rc21', installer_version='4.0.0-rc21',
-                         migration_review={'error_aggregation': a.LEGACY_MARKER})
+                         migration_review={'error_aggregation': self.installed_marker})
         for path in i.runtime_files():
             path.write_bytes(files[path.name])
         proof = json.loads((i.HERE / 'upgrade_rc21.json').read_text())
@@ -48,7 +49,7 @@ class Rc21AggregationTests(MinimalLegacyTests):
         (i.BASE / 'manifest.json').write_text(json.dumps(self.meta))
 
     def test_original_release_payload_and_frozen_graph_validate(self):
-        self.assertEqual(a.prepare(self.plain, a.LEGACY_MARKER), self.old_config)
+        self.assertEqual(a.prepare(self.plain, self.installed_marker), self.old_config)
         self.assertEqual(i.validate_v4_upgrade(TARGET, {}), self.meta)
 
     def test_explicit_upgrade_changes_only_reviewed_graph_and_keeps_cursor(self):
@@ -80,7 +81,7 @@ class Rc21AggregationTests(MinimalLegacyTests):
                 patch.object(i, 'backup', return_value={}), patch.object(i, 'activate') as activate:
             legacy_upgrade.upgrade(i, TARGET, {})
         self.assertEqual(self.path.read_bytes(), before)
-        self.assertEqual(activate.call_args.args[9]['error_aggregation'], a.LEGACY_MARKER)
+        self.assertEqual(activate.call_args.args[9]['error_aggregation'], self.installed_marker)
         self.assertNotIn(['systemctl', 'restart', 'vector.service'], [c.args[0] for c in execute.call_args_list])
 
     def test_changed_rc21_graph_is_rejected_even_with_rewritten_baseline(self):
@@ -91,7 +92,7 @@ class Rc21AggregationTests(MinimalLegacyTests):
         with self.assertRaisesRegex(RuntimeError, 'differs_from_blueprint'):
             i.validate_v4_upgrade(TARGET, {})
         with self.assertRaisesRegex(RuntimeError, 'differs_from_blueprint'):
-            a.replace_v21(cfg)
+            a.replace_reviewed(cfg, self.installed_marker)
 
     def test_new_marker_validates_and_is_idempotent(self):
         self.path.write_text(json.dumps(a.prepare(self.plain)))

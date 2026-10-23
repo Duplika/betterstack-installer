@@ -2,7 +2,7 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 8 y 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc22 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc23 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 **No usar rc8:** se conserva como artefacto histórico; su escritura de permisos y reversión tienen fallos corregidos en rc9.
 
@@ -20,12 +20,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc22/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc23/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc22/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc23/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -196,3 +196,8 @@ Validación: pruebas de actualización desde payloads publicados, ausencia de re
 ## Corrección de agrupación opcional rc22
 
 Para una base minimal-v4 con agrupación rc21, usar `preflight --aggregate-errors`, `upgrade --aggregate-errors` y `verify` del instalador rc22 fijado y verificado. Sólo la opción explícita migra el grafo. Conserva conteos y fechas originales en UTC, incluso fuera de orden; errores con fechas inválidas se envían completos. Reinicia únicamente Vector para aplicar la configuración. No reescribe historial ni recupera fechas ya descartadas. Los grupos en memoria no son auditoría. Los observer-v4 sin esa agrupación pueden permanecer en rc21.
+
+
+## Corrección de fechas tipadas rc23
+
+**La agrupación opcional rc22 debe reemplazarse por rc23.** Su prueba sólo cubría fechas en texto y no el timestamp VRL que entrega el lector real. rc23 prueba el parser/filtro original junto al agrupador y conserva tanto conteos como fechas. Usar el instalador rc23 fijado y verificado con `preflight --aggregate-errors`, `upgrade --aggregate-errors` y `verify`. La actualización sin esa opción conserva el grafo previo. Los observer-v4 sin agrupación opcional pueden continuar en rc21.

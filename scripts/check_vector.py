@@ -9,6 +9,7 @@ import tempfile
 import context_cleanup
 import error_aggregation
 import threading
+import copy
 
 
 def main():
@@ -31,14 +32,20 @@ def main():
         path = Path(folder) / 'aggregate.json'; path.write_text(json.dumps(aggregation))
         subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(path)], check=True, timeout=120)
     check_aggregation(args.vector, aggregation)
+    check_aggregation(args.vector, aggregation, native_dates=True)
+    check_reader_aggregation(args.vector, aggregation)
     print('Synthetic context cleanup: ' + str(len(config['tests'])) + ' native Vector cases passed.')
 
 
-def check_aggregation(vector, config):
+def check_aggregation(vector, config, native_dates=False):
     # Run the actual route/remap/reduce graph. Only timers are shortened;
     # production five-minute settings are validated above with the full graph.
-    transforms = {k:v for k,v in config['transforms'].items() if k.startswith('repeat_')}
+    transforms = {k:copy.deepcopy(v) for k,v in config['transforms'].items() if k.startswith('repeat_')}
     transforms['repeat_route']['inputs'] = ['input']
+    if native_dates:
+        transforms['native_dates'] = {'type': 'remap', 'inputs': ['input'],
+                                      'source': '.dt = parse_timestamp(to_string(.dt) ?? "", format: "%+") ?? .dt'}
+        transforms['repeat_route']['inputs'] = ['native_dates']
     transforms['repeat_reduce'].update(expire_after_ms=100, end_every_period_ms=100, flush_period_ms=20)
     graph = {'sources': {'input': {'type':'stdin','decoding':{'codec':'json'}}},
              'transforms':transforms,
@@ -87,6 +94,54 @@ def check_aggregation(vector, config):
         assert combined['last_seen'] == '2026-01-01T00:00:03.123456Z', combined
         assert 'Failed to create value merger' not in stderr, stderr
     print('Native aggregation: exact event dates, out-of-order/offset input, counts, grouping, timer flush, critical bypass and payload minimization passed.')
+
+
+def check_reader_aggregation(vector, config):
+    # Exercise the real released reader normalization and filtering, which
+    # produce VRL timestamps rather than JSON strings. No production logs.
+    names = {'normalize_errors', 'useful_errors'}
+    transforms = {k:copy.deepcopy(v) for k,v in config['transforms'].items()
+                  if k.startswith('repeat_') or k in names}
+    transforms['normalize_errors']['inputs'] = ['input']
+    transforms['repeat_reduce'].update(expire_after_ms=100, end_every_period_ms=100, flush_period_ms=20)
+    graph = {'sources': {'input': {'type': 'stdin', 'decoding': {'codec': 'json'}}},
+             'transforms': transforms,
+             'sinks': {'output': {'type': 'console', 'inputs': ['repeat_dates', 'repeat_route._unmatched'],
+                                  'encoding': {'codec': 'json'}, 'target': 'stdout'}}}
+    def ls(at, suffix=''):
+        return {'host': 'cloud.example.net', 'service': 'litespeed',
+                'message': at + ' [WARN] [APVH_example.invalid] Abort request processing by PID: 12345, kill: 1 ' + suffix}
+    def sql(at):
+        return {'host': 'cloud.example.net', 'service': 'wordpress', 'site': 'example.net',
+                'message': '[' + at + ' UTC] WordPress database error Commands out of sync; PRIVATE_SQL_DIAGNOSTIC'}
+    critical = ls('2026-01-01T00:00:05Z', 'SIGKILL')
+    unknown = ls('unparsed time')
+    events = [ls('2026-01-01T00:00:03.123456Z'), ls('2026-01-01T00:00:01.123456Z'),
+              ls('2025-12-31T21:00:02.123456-03:00'), sql('01-Jan-2026 00:00:04'),
+              sql('01-Jan-2026 00:00:02'), critical, unknown]
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / 'reader.json'; path.write_text(json.dumps(graph))
+        result = subprocess.run([vector, '--config-json', str(path)],
+                                input=''.join(json.dumps(r) + '\n' for r in events),
+                                capture_output=True, text=True, timeout=20, check=True)
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    summaries = {r['event_kind']: r for r in rows if 'occurrences' in r}
+    assert set(summaries) == {'lsapi_abort', 'sql_commands_out_of_sync'}, rows
+    assert summaries['lsapi_abort']['occurrences'] == 3, rows
+    assert summaries['lsapi_abort']['first_seen'] == '2026-01-01T00:00:01.123456Z', rows
+    assert summaries['lsapi_abort']['last_seen'] == '2026-01-01T00:00:03.123456Z', rows
+    assert summaries['sql_commands_out_of_sync']['occurrences'] == 2, rows
+    assert summaries['sql_commands_out_of_sync']['first_seen'] == '2026-01-01T00:00:02Z', rows
+    assert summaries['sql_commands_out_of_sync']['last_seen'] == '2026-01-01T00:00:04Z', rows
+    assert all(r['dt'] == r['first_seen'] for r in summaries.values()), rows
+    assert all('PRIVATE_SQL_DIAGNOSTIC' not in json.dumps(r) for r in summaries.values()), rows
+    assert any(r.get('level') == 'critical' and r['message'] == critical['message']
+               and 'occurrences' not in r for r in rows), rows
+    assert any(r.get('timestamp_unparsed') is True and r['message'] == unknown['message']
+               and 'occurrences' not in r for r in rows), rows
+    for warning in ('Mapping failed', 'Failed to create value merger', 'expected string', 'error[E'):
+        assert warning not in result.stderr, result.stderr
+    print('Native reader-to-summary: actual parser/filter, typed dates, exact counts/dates and unparsed/critical bypass passed.')
 
 
 if __name__ == '__main__':

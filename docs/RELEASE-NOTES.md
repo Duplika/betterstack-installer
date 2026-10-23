@@ -1,3 +1,15 @@
+# 4.0.0-rc23 — candidata: fechas nativas del lector y conteos completos
+
+Sustituye la agrupación opcional rc22. La normalización heredada entrega dt como timestamp nativo de VRL. rc22 sólo probaba fechas JSON en texto: su aserción string!(.dt) abortaba el remap y el evento original continuaba hacia reduce, sin occurrences ni first_seen/last_seen. Las métricas del host y los lectores seguían funcionando, pero no debía considerarse validada esa agrupación.
+
+rc23 serializa tanto timestamps VRL como fechas en texto con to_string antes de parsearlos y reducir enteros de microsegundos. Conserva conteos y dt/first_seen/last_seen exactos. Si el lector marca timestamp_unparsed, el evento pasa completo, sin convertir la fecha de observación en una fecha original. Los críticos mantienen su ruta completa.
+
+La prueba nativa recorre ahora normalize_errors → useful_errors → agrupación con el parser y filtro originales. Verifica eventos LSAPI y SQL sintéticos, timestamps VRL reales, fechas en texto, offsets UTC, orden alterado, conteos, precisión de microsegundos, bypass crítico y fechas no interpretadas; rechaza advertencias de mapping/reduce. La prueba rc22 anterior con fechas convertidas a timestamp reproduce el fallo antes de la corrección.
+
+Admite migración explícita desde los artefactos originales rc21 y rc22 mediante `preflight --aggregate-errors`, `upgrade --aggregate-errors` y `verify`. Comprueba el runtime, las configuraciones congeladas y la integridad antes de reemplazar el grafo. Conserva fuentes, lectores, métricas, credenciales, permisos, propietarios, buffers y cursores. Reinicia únicamente Vector para aplicar el ajuste; la transacción de reversión se prueba con el payload rc22 original.
+
+No usar la agrupación rc22 para nuevas instalaciones. Las releases anteriores permanecen inmutables. Los observer-v4 sin agrupación opcional pueden permanecer en rc21. No reconstruye conteos o fechas ausentes en resúmenes históricos. Candidata pendiente de aceptación remota tras instalarla.
+
 # 4.0.0-rc22 — candidata: fechas originales en resúmenes de errores
 
 Corrige la agrupación opcional de rc21 para el transporte heredado minimal-v4. Vector reduce sólo acepta números en min/max; rc21 descartaba dt, first_seen y last_seen al recibir fechas ISO como texto. Los conteos se conservaban, pero Better Stack usaba una fecha de recepción en lugar de la fecha original.
