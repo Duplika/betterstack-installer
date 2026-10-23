@@ -628,7 +628,7 @@ def validate_v4_upgrade(target, caps):
                          '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json',
                          '4.0.0-rc13': 'upgrade_rc13.json', '4.0.0-rc15': 'upgrade_rc15.json',
                          '4.0.0-rc10': 'upgrade_rc10.json', '4.0.0-rc17': 'upgrade_rc17.json',
-                         '4.0.0-rc18': 'upgrade_rc18.json', '4.0.0-rc19': 'upgrade_rc19.json'}
+                         '4.0.0-rc18': 'upgrade_rc18.json', '4.0.0-rc19': 'upgrade_rc19.json', '4.0.0-rc20': 'upgrade_rc20.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -645,7 +645,7 @@ def validate_v4_upgrade(target, caps):
         import legacy_upgrade
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19')
+    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -729,7 +729,7 @@ def upgrade_v4(target, caps):
     identity.status(quiet=True)  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19')
+    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
@@ -767,7 +767,7 @@ def upgrade_v4(target, caps):
         raise
 
 
-def upgrade(target, caps, simplify_context=False):
+def upgrade(target, caps, simplify_context=False, aggregate_errors=False):
     if (BASE / 'complete').exists():
         existing = load(BASE / 'manifest.json')
         if existing['agent_version'] == VERSION and existing['target'] == target:
@@ -782,7 +782,7 @@ def upgrade(target, caps, simplify_context=False):
             upgrade_v4(target, caps)
         else:
             import legacy_upgrade
-            legacy_upgrade.upgrade(sys.modules[__name__], target, caps)
+            legacy_upgrade.upgrade(sys.modules[__name__], target, caps, aggregate_errors)
         return
     old = validate_migration(target)
     if target.get('wordpress'):
@@ -929,7 +929,10 @@ def main():
                    help='Recuperar sólo la base rc11 detenida por timeout LVE revisado')
     p.add_argument('--simplify-context', action='store_true',
                    help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
+    p.add_argument('--aggregate-errors', action='store_true', help='Agrupar errores repetidos sólo en la base minimal-v4 revisada')
     args = p.parse_args()
+    if args.aggregate_errors and (args.operation not in ('preflight', 'upgrade') or args.simplify_context or args.recover_partial or args.recover_bootstrap):
+        p.error('--aggregate-errors sólo admite preflight/upgrade sin otras migraciones')
     if args.recover_bootstrap and (args.operation not in ('preflight', 'resume') or args.recover_partial or args.simplify_context):
         p.error('--recover-bootstrap sólo admite preflight/resume sin otras migraciones')
     if args.recover_partial and args.operation not in ('preflight', 'resume'):
@@ -974,6 +977,18 @@ def main():
         args.target = args.target or Path('/root/perfil.json')
         target = load(args.target)
     caps = secure_target(target)
+    if args.aggregate_errors:
+        import error_aggregation
+        if not (BASE / 'complete').exists():
+            raise RuntimeError('aggregation:requires_reviewed_minimal_v4')
+        old = load(BASE / 'manifest.json')
+        if old['agent_version'] == VERSION:
+            validate_current(target, caps)
+            if old.get('migration_review', {}).get('error_aggregation') != error_aggregation.MARKER:
+                raise RuntimeError('aggregation:select_during_version_upgrade')
+        else:
+            validate_v4_upgrade(target, caps)
+        error_aggregation.validate_plan(sys.modules[__name__], old)
     if args.recover_bootstrap:
         validate_bootstrap_recovery(target)
         if args.operation == 'preflight':
@@ -1057,7 +1072,7 @@ def main():
             p.error('--credential es obligatorio para instalación nueva')
         fresh(target, caps, args.credential)
     else:
-        upgrade(target, caps, args.simplify_context)
+        upgrade(target, caps, args.simplify_context, args.aggregate_errors)
     request_publication(target)
 
 

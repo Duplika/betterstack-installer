@@ -117,7 +117,8 @@ class ScaleTests(unittest.TestCase):
                 coverage = collector.collect_access(out, state, domains, profile)
             self.assertEqual(coverage['files'], 2)
             self.assertEqual(coverage['skipped_bytes'], 0)
-            self.assertTrue(next(x for x in out.logs if x['event_kind'] == 'access_log_coverage')['coverage_complete'])
+            self.assertEqual(state['coverage_stability_v21']['full_cycles'], 1)
+            self.assertFalse(any(x['event_kind'] == 'access_log_coverage' for x in out.logs))
             requests = next(x for x in out.metrics if x['name'] == 'duplika_site_requests_per_second')
             self.assertAlmostEqual(requests['gauge']['value'] * 60, 20, delta=.02)
 

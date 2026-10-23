@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc20'
+COLLECTOR_RELEASE = '4.0.0-rc21'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -206,14 +206,36 @@ class Output:
         self.suppressed = collections.Counter()
         self.state = state if state is not None else {}
         self.now = time.time() if now is None else now
-        self.sample_due = self.now - self.state.get('process_log_at', -100000) >= 300
-        if self.sample_due:
-            self.state['process_log_at'] = self.now
-
     def log(self, kind, **fields):
-        if kind == 'process_sample' and fields.get('state') != 'D' and not self.sample_due:
-            self.suppressed[kind] += 1
-            return
+        if kind == 'process_sample':
+            # Metrics retain all sampled resources. Detail is incident-only and
+            # keyed by account/reason, never by short-lived PID.
+            reason = ('blocked_process' if fields.get('state') == 'D' else
+                      'high_cpu_process' if (number(fields.get('cpu_percent')) or 0) >= 80 else None)
+            entries = self.state.setdefault('process_detail_v21', {})
+            for key, entry in list(entries.items()):
+                if self.now < entry or self.now - entry >= 86400:
+                    del entries[key]
+            key = str(fields.get('uid', '')) + ':' + str(fields.get('user', '')) + ':' + str(reason)
+            if reason is None or (key in entries and self.now - entries[key] < INCIDENT_REMINDER_SECONDS):
+                self.suppressed[kind] += 1
+                return
+            if len(entries) >= 1024:
+                del entries[min(entries, key=entries.get)]
+            entries[key] = self.now
+            fields['log_reason'] = reason
+            fields['level'] = 'warning'
+        if kind == 'access_log_coverage':
+            # A recovery log requires three consecutive complete core cycles.
+            # Per-cycle metrics remain immediate, including every partial cycle.
+            entry = self.state.setdefault('coverage_stability_v21', {})
+            gap = self.now - entry.get('at', self.now)
+            streak = entry.get('full_cycles', 0) if 0 < gap <= 120 else 0
+            streak = streak + 1 if fields.get('coverage_complete') else 0
+            entry.update(at=self.now, full_cycles=min(streak, 3))
+            if fields.get('coverage_complete') and streak < 3:
+                self.suppressed[kind] += 1
+                return
         if kind == 'site_traffic':
             # Healthy traffic stays in metrics. Only incident windows retain breakdowns.
             pending = self.state.setdefault('traffic_incidents_v16', {})

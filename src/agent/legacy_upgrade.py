@@ -1,5 +1,6 @@
 """Read-only review of the two inherited AlmaLinux transports; no pipeline rewrite."""
 import importlib.util
+import error_aggregation
 from pathlib import Path
 
 
@@ -19,7 +20,7 @@ def validate(api, old, target):
     if variant not in known:
         raise RuntimeError('upgrade:unreviewed_legacy_variant')
     version, config, profile, helper, blueprint, reference, services = known[variant]
-    if (old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19') or old.get('storage_observer')
+    if (old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20') or old.get('storage_observer')
             or old.get('config_path') != config or old.get('profile_path') != profile
             or old.get('services') != services + [api.NAME + '.timer']
             or old.get('oneshots') != [services[1][:-6] + '.service']
@@ -46,6 +47,8 @@ def validate(api, old, target):
     generated = module.make_config(data, token, target['ingesting_host'])
     if variant == 'almalinux-wordpress-minimal-v4':
         generated = api.context_cleanup.prepare(generated)
+    if old.get('migration_review', {}).get('error_aggregation') == error_aggregation.MARKER:
+        generated = error_aggregation.prepare(generated)
     # Embedded tests are inactive; all active sources/transforms/sinks must match.
     cfg.pop('tests', None); generated.pop('tests', None)
     if cfg != generated:
@@ -58,18 +61,33 @@ def validate(api, old, target):
     return old
 
 
-def upgrade(api, target, caps):
+def upgrade(api, target, caps, aggregate_errors=False):
     old = api.validate_v4_upgrade(target, caps)
     api.identity.status(quiet=True)
     paths = [*api.runtime_files(), api.BASE / 'manifest.json', api.BASE / 'complete',
              api.UNITS / (api.NAME + '.service'), api.UNITS / (api.NAME + '.timer')]
-    transaction = api.backup(paths, [api.NAME + '.timer', api.NAME + '.service'])
+    config = error_aggregation.validate_plan(api, old) if aggregate_errors else None
+    affected = [api.NAME + '.timer', api.NAME + '.service']
+    if aggregate_errors:
+        paths += [Path(old['config_path'])]
+        affected += [old['services'][0]]
+    transaction = api.backup(paths, affected)
     original = [Path(p) for p in old['critical_paths'] if p not in set(map(str, paths))]
     try:
         api.execute(['systemctl', 'stop', api.NAME + '.timer', api.NAME + '.service'])
+        review = dict(old.get('migration_review') or {})
+        if aggregate_errors:
+            if api.identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
+                raise RuntimeError('aggregation:changed_during_upgrade')
+            path = Path(old['config_path'])
+            api.write(path, api.identity.canonical(config), path.stat().st_mode & 0o777)
+            if api.trusted_executable('restorecon'):
+                api.execute(['restorecon', str(path)])
+            api.execute(['systemctl', 'restart', old['services'][0]])
+            review['error_aggregation'] = error_aggregation.MARKER
         api.activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [s for s in old['services'] if s != api.NAME + '.timer'], old['oneshots'],
-            original, old['vector_binary'], old['pipeline_variant'], old.get('migration_review'))
+            original, old['vector_binary'], old['pipeline_variant'], review)
     except BaseException as error:
         api.recover_failure(transaction, error)
         raise

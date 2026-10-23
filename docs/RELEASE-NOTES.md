@@ -192,3 +192,11 @@ No instalar rc16 ni forzar/rebaselinar un upgrade fallido. Si la reversión auto
 ### 4.0.0-rc20 — bounded resource preflight for new installations
 
 Run a transient systemd LVE and basic /proc probe during fresh preflight and again before bootstrap mutation, using the collector CPU/memory/privacy constraints. Fail early on timeout, malformed output or unavailable sandbox. Report only counts and elapsed time. Skip on systems without LVE. Preserve real first-cycle health checks, all existing sampling and log policies. Add reviewed rc19 upgrade hashes; historical released artifacts remain unchanged. Native acceptance on a new host is required; no stable promotion.
+
+## 4.0.0-rc21
+
+Incident-only process details (blocked or at least 80% of one CPU core), bounded per-user/reason reminders, unchanged resource metrics every five minutes. Coverage recovery logs require three consecutive complete cycles; quality metrics remain per cycle.
+
+Explicit `--aggregate-errors` migration for the byte-reviewed inherited minimal-v4 transport: non-critical LSAPI aborts and SQL sync errors become five-minute summaries with counts and time bounds. Critical and other errors bypass aggregation. Metrics, inputs, credentials, offsets and checkpoints are preserved. Aggregation is in-memory and is not an audit log; abrupt termination may lose an unflushed window. This option must be selected during version upgrade. Normal upgrades retain inherited pipelines.
+
+Reviewed upgrade proof from rc20 added. Candidate requires native pilot and remote acceptance; no servers are automatically updated.

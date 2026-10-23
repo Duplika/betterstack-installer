@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 import context_cleanup
+import error_aggregation
+import threading
 
 
 def main():
@@ -24,7 +26,54 @@ def main():
         path = Path(folder) / 'vector.json'; path.write_text(json.dumps(config))
         subprocess.run([args.vector, 'test', '--config-json', str(path)], check=True, timeout=120)
         subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(path)], check=True, timeout=120)
+    aggregation = error_aggregation.prepare(config)
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / 'aggregate.json'; path.write_text(json.dumps(aggregation))
+        subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(path)], check=True, timeout=120)
+    check_aggregation(args.vector, aggregation)
     print('Synthetic context cleanup: ' + str(len(config['tests'])) + ' native Vector cases passed.')
+
+
+def check_aggregation(vector, config):
+    # Run the actual route/remap/reduce graph. Only timers are shortened;
+    # production five-minute settings are validated above with the full graph.
+    transforms = {k:v for k,v in config['transforms'].items() if k.startswith('repeat_')}
+    transforms['repeat_route']['inputs'] = ['input']
+    transforms['repeat_reduce'].update(expire_after_ms=100, end_every_period_ms=100, flush_period_ms=20)
+    graph = {'sources': {'input': {'type':'stdin','decoding':{'codec':'json'}}},
+             'transforms':transforms,
+             'sinks':{'output':{'type':'console','inputs':['repeat_reduce','repeat_route._unmatched'],
+                                'encoding':{'codec':'json'},'target':'stdout'}}}
+    def row(kind, level='warning', site='example.net'):
+        return {'dt':'2026-01-01T00:00:00Z','host':'cloud.example.net','service':'application',
+                'site':site,'event_kind':kind,'level':level,'message':'PRIVATE_SQL_DIAGNOSTIC'}
+    with tempfile.TemporaryDirectory() as folder:
+        path=Path(folder)/'config.json';path.write_text(json.dumps(graph))
+        proc=subprocess.Popen([vector,'--config-json',str(path)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        for event in [row('lsapi_abort')]*3+[row('sql_commands_out_of_sync')]*2+[row('lsapi_abort',site='other.example.net'),row('native_crash','critical'),row('lsapi_abort','critical')]:
+            proc.stdin.write(json.dumps(event)+'\n')
+        proc.stdin.flush()
+        rows=[]; expired=threading.Event()
+        def read_output():
+            for line in proc.stdout:
+                rows.append(json.loads(line))
+                if len(rows) >= 5:expired.set()
+        reader=threading.Thread(target=read_output,daemon=True);reader.start()
+        try:
+            assert expired.wait(10), 'Native timer did not flush while input remained open'
+            proc.stdin.write(json.dumps(row('lsapi_abort'))+'\n');proc.stdin.flush()
+            proc.stdin.close();proc.wait(timeout=15);reader.join(timeout=2)
+            stderr=proc.stderr.read()
+            if proc.returncode:raise RuntimeError('native aggregation failed: '+stderr[-2000:])
+        finally:
+            if proc.poll() is None:proc.kill();proc.wait()
+        summaries=[r for r in rows if 'occurrences' in r]
+        assert sorted(r['occurrences'] for r in summaries)==[1,1,2,3], rows
+        assert sum(r['occurrences'] for r in summaries)==7
+        assert len([r for r in rows if r['level']=='critical'])==2
+        assert all('PRIVATE_SQL_DIAGNOSTIC' not in json.dumps(r) for r in summaries)
+        assert all(r['aggregation_seconds']==300 for r in summaries)
+    print('Native aggregation: counts, grouping, timer flush, critical bypass and payload minimization passed.')
 
 
 if __name__ == '__main__':

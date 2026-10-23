@@ -175,3 +175,19 @@ En altas nuevas con LVE disponible, preflight consulta cloudlinux-top en una uni
 La instalación repite la prueba justo antes del marcador base_installing y antes de paquetes/usuario/configuración/servicios persistentes del agente, para no confiar en una comprobación antigua. Un fallo detiene el alta; no eleva cuotas ni instala una sonda periódica. La unidad transitoria se recoge automáticamente. No instala paquetes en preflight, ni elimina las verificaciones del primer ciclo real del agente. Sistemas sin LVE omiten esta prueba. No prueba el recorrido completo de procesos por cuenta, la lectura de logs ni el envío remoto.
 
 Las actualizaciones conservan su comprobación del primer ciclo y no ejecutan esta prueba de altas. rc20 admite también rc19 con hashes revisados; no cambia frecuencias, presupuestos de lectura ni política de logs/métricas frente a rc19. No obliga a actualizar servidores ya aceptados sólo por esta mejora del alta.
+
+## rc21: detalle de procesos por incidente y cobertura estable
+
+- CPU, memoria y LVE mantienen sus métricas y el muestreo real cada 300 segundos. El detalle `process_sample` se envía sólo ante estado D o CPU observada de al menos 80% de un núcleo. Como máximo un detalle por usuario/motivo cada 900 segundos; no se guardan claves por PID. Las métricas de todos los procesos muestreados continúan disponibles. Una muestra de procesos no detecta procesos que nacen y terminan entre muestras.
+- Una cobertura parcial se registra inmediatamente y se recuerda cada 900 segundos. Su recuperación requiere tres ciclos completos consecutivos, separados por no más de 120 segundos. Las métricas de calidad siguen mostrando el resultado de cada ciclo, sin suavizado.
+- Las actualizaciones conservan credenciales, destinos, offsets, checkpoints, configuración de Vector y frecuencias de almacenamiento. Se admite rc20 además de las rutas revisadas anteriores.
+
+### Agrupación opcional del transporte heredado minimal-v4
+
+`preflight --aggregate-errors` y `upgrade --aggregate-errors` seleccionan una migración revisada exclusivamente para `almalinux-wordpress-minimal-v4`. Debe seleccionarse durante el cambio de versión. Sin esa opción, el transporte heredado se conserva.
+
+Agrupa únicamente `lsapi_abort` y `sql_commands_out_of_sync` no críticos, por host, servicio, sitio, virtual host, nivel y tipo de aborto. Emite resúmenes con `occurrences`, `first_seen` y `last_seen` cada cinco minutos como máximo; elimina SQL, mensajes repetidos y PIDs del resumen. Los eventos críticos y los demás tipos atraviesan la ruta sin agregación. Las consultas de frecuencia deben sumar `occurrences` para los resúmenes; contar filas ya no representa el número de errores.
+
+Se valida el grafo con el Vector instalado antes de modificarlo y se guarda una transacción para rollback. Se conserva propietario y modo de la configuración, fuentes, buffers y métricas. El estado temporal del reduce reside en memoria: una terminación abrupta puede perder los conteos todavía no emitidos; no es un registro de auditoría. La agrupación reduce ruido, no corrige la causa de los errores de aplicación.
+
+Validación: pruebas de actualización desde payloads publicados, ausencia de replay de métricas, límites de detalles, reinicios del estado, recuperación de cobertura, rollback de la migración, grafo nativo Vector y conteos/expiración/bypass de críticos con entradas sintéticas. Requiere piloto y recepción remota antes de ampliar el despliegue.

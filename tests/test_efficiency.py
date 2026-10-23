@@ -100,13 +100,14 @@ class IncidentTests(unittest.TestCase):
         out.log('collector_heartbeat', accounts=100, domains=200, components={'lve': 'failed'})
         self.assertEqual(len(out.logs), 1)
 
-    def test_partial_access_reminders_are_bounded_but_recovery_immediate(self):
+    def test_partial_access_reminders_are_bounded_and_recovery_stable(self):
         state = {}; logs = []
         for now in range(0, 961, 60):
             out = c.Output(PROFILE, state, now=now)
             out.log('access_log_coverage', coverage_complete=False, skipped_bytes=now)
             logs += out.logs
         self.assertEqual(len(logs), 2)
-        out = c.Output(PROFILE, state, now=1020)
-        out.log('access_log_coverage', coverage_complete=True)
-        self.assertEqual(len(out.logs), 1)
+        for now in (1020, 1080, 1140):
+            out = c.Output(PROFILE, state, now=now)
+            out.log('access_log_coverage', coverage_complete=True)
+            self.assertEqual(len(out.logs), int(now == 1140))
