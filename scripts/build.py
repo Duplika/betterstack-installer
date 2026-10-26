@@ -11,7 +11,7 @@ import re
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENT = ('upgrade_rc20.json', 'error_aggregation.py', 'upgrade_rc19.json', 'upgrade_rc18.json', 'upgrade_rc10.json', 'upgrade_rc17.json', 'legacy_upgrade.py', 'upgrade_rc15.json', 'storage.py', 'upgrade_rc13.json', 'capabilities.py', 'collector.py', 'config.py', 'health.py', 'identity.py', 'install_base.py', 'installer.py', 'context_cleanup.py', 'partial_recovery.py', 'recovery_rc11.json', 'upgrade_rc3.json', 'upgrade_rc4.json', 'upgrade_rc5.json', 'upgrade_rc6.json', 'upgrade_rc7.json', 'upgrade_rc12.json')
+AGENT = ('upgrade_rc24.json', 'upgrade_rc23.json', 'upgrade_rc22.json', 'upgrade_rc21.json', 'upgrade_rc20.json', 'error_aggregation.py', 'upgrade_rc19.json', 'upgrade_rc18.json', 'upgrade_rc10.json', 'upgrade_rc17.json', 'legacy_upgrade.py', 'upgrade_rc15.json', 'storage.py', 'upgrade_rc13.json', 'capabilities.py', 'collector.py', 'config.py', 'health.py', 'identity.py', 'install_base.py', 'installer.py', 'context_cleanup.py', 'partial_recovery.py', 'recovery_rc11.json', 'upgrade_rc3.json', 'upgrade_rc4.json', 'upgrade_rc5.json', 'upgrade_rc6.json', 'upgrade_rc7.json', 'upgrade_rc12.json')
 LEGACY = ('legacy_identity.py', 'legacy_cloud_config.py', 'legacy_cloud_collector.py',
           'legacy_alma_profile.py', 'legacy_alma_acl.py', 'legacy_context_reference.py',
           'legacy_context_acl.py', 'legacy_context_reader.py')
@@ -25,6 +25,10 @@ def version():
 
 
 def build(directory):
+    collector_release = re.search(r"^COLLECTOR_RELEASE = '([^']+)'$",
+                                  (ROOT/'src/agent/collector.py').read_text(), re.M)
+    if not collector_release or collector_release[1] != version():
+        raise ValueError('Collector release must match installer version')
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     output = directory/'installer.sh'

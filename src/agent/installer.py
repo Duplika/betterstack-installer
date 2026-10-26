@@ -628,7 +628,7 @@ def validate_v4_upgrade(target, caps):
                          '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json',
                          '4.0.0-rc13': 'upgrade_rc13.json', '4.0.0-rc15': 'upgrade_rc15.json',
                          '4.0.0-rc10': 'upgrade_rc10.json', '4.0.0-rc17': 'upgrade_rc17.json',
-                         '4.0.0-rc18': 'upgrade_rc18.json', '4.0.0-rc19': 'upgrade_rc19.json', '4.0.0-rc20': 'upgrade_rc20.json'}
+                         '4.0.0-rc18': 'upgrade_rc18.json', '4.0.0-rc19': 'upgrade_rc19.json', '4.0.0-rc20': 'upgrade_rc20.json', '4.0.0-rc21': 'upgrade_rc21.json', '4.0.0-rc22': 'upgrade_rc22.json', '4.0.0-rc23': 'upgrade_rc23.json', '4.0.0-rc24': 'upgrade_rc24.json'}
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -645,7 +645,7 @@ def validate_v4_upgrade(target, caps):
         import legacy_upgrade
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20')
+    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -729,7 +729,7 @@ def upgrade_v4(target, caps):
     identity.status(quiet=True)  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20')
+    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
