@@ -1,3 +1,9 @@
+# 4.0.0-rc26 — candidata: etiqueta real del ciclo y control de empaquetado
+
+Corrige el rechazo de actualización observer-v4 de rc25. Su colector ejecutaba el reparto nuevo pero escribía COLLECTOR_RELEASE rc21 en el marcador; verify_new_observer_cycle exigía la versión candidata y la transacción revertía la actualización. rc26 alinea ambas versiones, sin relajar la comprobación de versión, frescura, inicio del ciclo ni componentes fallidos. Mantiene el reparto de accesos y sus límites.
+
+El builder rechaza un marcador de versión ausente o distinto del instalador. La nueva integración extrae el colector del payload distribuido, ejecuta main con inventario/probes sintéticos, escribe spool/estado/marcador reales y llama al verificador de upgrade. Reproduce el fallo con el artefacto rc25 congelado y verifica el payload actual. No fabrica un JSON con la versión esperada. Los artefactos anteriores, la agrupación rc24 y las referencias legacy quedan intactos. No usar rc25 para observer-v4 ni forzar una instalación tras rollback incompleto. Candidata pendiente de aceptación remota.
+
 # 4.0.0-rc25 — candidata: presupuesto de accesos por demanda
 
 El reparto anterior podía omitir parte de un domlog grande aun cuando el tráfico conjunto cabía holgadamente en el presupuesto. rc25 calcula cuotas por bytes pendientes: satisface primero las colas pequeñas y reparte lo restante entre las grandes. Conserva 8 MiB por ciclo, 2 MiB por archivo, rotación de prioridad, una apertura por archivo, cadencias, parser y estado. El crecimiento tras el descubrimiento aprovecha capacidad libre y puede compartir la reserva de forma acotada, conservando lectura para archivos activos conocidos.

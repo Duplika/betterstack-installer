@@ -2,7 +2,7 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 8 y 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc25 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc26 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 **No usar rc8:** se conserva como artefacto histórico; su escritura de permisos y reversión tienen fallos corregidos en rc9.
 
@@ -20,12 +20,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc25/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc26/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc25/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc26/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -219,3 +219,10 @@ Distribuye el mismo presupuesto de 8 MiB por ciclo según los bytes pendientes d
 La lectura sigue abriendo cada archivo una sola vez. El crecimiento concurrente puede usar capacidad libre y compartir el presupuesto reservado sin dejar sin lectura a los archivos activos conocidos. No cambia los offsets de entrada, la inicialización sin historial, el parser, los timers ni la política de incidentes. Los errores de formato, rotaciones y límites reales siguen dando cobertura parcial. No recupera bytes ya omitidos.
 
 Añade duplika_access_read_bytes y duplika_access_max_file_backlog_bytes, dos métricas agregadas por host, sin rutas ni contenido de logs. Permiten distinguir presión de lectura y topes por archivo sin aumentar el volumen de detalles. La actualización observer-v4 conserva Vector, lectores, credenciales, almacenamiento y estado; verifica un ciclo nuevo. La agrupación opcional rc24 permanece idéntica y los perfiles heredados no incorporan este colector por una actualización de identidad. Candidata para piloto; la mejora real de cobertura y consumo debe comprobarse remotamente.
+
+
+## rc26: identidad del ciclo coherente con la release
+
+No usar rc25 para actualizar observer-v4: el colector conservaba COLLECTOR_RELEASE rc21 y la verificación del primer ciclo rechazaba la actualización con new_observer_cycle_not_verified. La transacción revierte código y perfil; la transmisión de un ciclo durante la prueba no demuestra que rc25 haya quedado instalada. Si la reversión informa rollback_incomplete, revisar ese estado antes de intentar otra actualización.
+
+rc26 alinea la versión interna del colector con el instalador y conserva el reparto de accesos de rc25. El builder rechaza versiones internas ausentes o diferentes. Una prueba ejecuta main del colector extraído del payload, escribe su marcador real y lo somete al verificador; reproduce el rechazo del artefacto rc25 y comprueba aceptación de la candidata. Los probes externos son sintéticos; no se falsifica el marcador. Los artefactos anteriores quedan inmutables. Requiere preflight y aceptación remota del piloto después de instalar.

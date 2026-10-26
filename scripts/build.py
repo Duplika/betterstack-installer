@@ -25,6 +25,10 @@ def version():
 
 
 def build(directory):
+    collector_release = re.search(r"^COLLECTOR_RELEASE = '([^']+)'$",
+                                  (ROOT/'src/agent/collector.py').read_text(), re.M)
+    if not collector_release or collector_release[1] != version():
+        raise ValueError('Collector release must match installer version')
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     output = directory/'installer.sh'
