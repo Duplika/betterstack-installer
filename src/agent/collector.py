@@ -491,6 +491,20 @@ def read_tail(path, previous, allowance):
             'rotated': rotated, 'bytes_read': len(data), 'skipped_bytes': skipped}
 
 
+def access_allowances(demands, budget):
+    """Max-min allocation: satisfy small tails before dividing scarce bytes."""
+    result = [0] * len(demands)
+    active = sorted((min(MAX_FILE_BYTES, max(0, need)), index)
+                    for index, need in enumerate(demands) if need > 0)
+    remaining = len(active)
+    for need, index in active:
+        grant = min(need, max(0, budget) // remaining)
+        result[index] = grant
+        budget -= grant
+        remaining -= 1
+    return result
+
+
 def collect_access(out, state, domains, profile):
     old = state.get('access_files', {})
     new, seen, coverage = {}, set(), collections.Counter()
@@ -516,9 +530,10 @@ def collect_access(out, state, domains, profile):
                     continue
                 seen.add(key)
                 previous = old.get(str(path))
-                backlog = previous is not None and (
-                    previous.get('inode') != list(key) or previous['offset'] != info.st_size)
-                candidates.append((path, site, backlog))
+                offset = info.st_size if previous is None else previous['offset']
+                if previous is not None and (previous.get('inode') != list(key) or offset > info.st_size):
+                    offset = 0
+                candidates.append((path, site, max(0, info.st_size - offset)))
             except (OSError, ValueError, RuntimeError):
                 coverage['unreadable_files'] += 1
     # Rotation makes rounding and unused budget favor a different file each cycle.
@@ -526,15 +541,23 @@ def collect_access(out, state, domains, profile):
         start = state.get('access_round_robin', 0) % len(candidates)
         candidates = candidates[start:] + candidates[:start]
         state['access_round_robin'] = (start + 1) % len(candidates)
-    remaining = sum(backlog for _, _, backlog in candidates)
-    for path, site, backlog in candidates:
+    demands = [need for _, _, need in candidates]
+    allowances = access_allowances(demands, budget)
+    reserved = sum(allowances)
+    remaining = sum(need > 0 for need in demands)
+    for index, (path, site, backlog) in enumerate(candidates):
+        planned = allowances[index]
+        # Unused capacity is available immediately. Growth after discovery may
+        # share reserved bytes too, without starving the known remaining tails.
+        free = max(0, budget - reserved)
+        if backlog:
+            share = planned * min(budget, reserved) // max(1, reserved)
+            remaining -= 1
+        else:
+            share = min(budget, reserved) // max(1, remaining + 1)
+        allowance = min(MAX_FILE_BYTES, free + share)
+        reserved -= planned
         try:
-            # A file classified as idle can grow before open/fstat. Reserve a
-            # share for that race instead of skipping its new bytes with zero.
-            shares = max(1, remaining + (not backlog))
-            allowance = min(MAX_FILE_BYTES, budget // shares)
-            if backlog:
-                remaining -= 1
             lines, position, quality = read_tail(path, old.get(str(path)), allowance)
             new[str(path)] = position
             budget -= quality['bytes_read']
@@ -575,6 +598,8 @@ def collect_access(out, state, domains, profile):
                        site=site, user=domains[site])
     out.log('access_log_coverage', coverage_complete=complete, **dict(coverage))
     out.metric('duplika_access_skipped_bytes', coverage['skipped_bytes'])
+    out.metric('duplika_access_read_bytes', coverage['bytes_read'])
+    out.metric('duplika_access_max_file_backlog_bytes', max(demands, default=0))
     out.metric('duplika_access_parse_failures', coverage['unparsed_lines'])
     out.metric('duplika_access_coverage_complete', int(complete))
     state['access_files'], state['access_at'] = new, time.time()

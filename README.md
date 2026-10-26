@@ -2,7 +2,7 @@
 
 Instalador común de Duplika para monitoreo acotado de servidores **AlmaLinux 9 / CloudLinux 8 y 9 con cPanel**, más migraciones revisadas de AlmaLinux 8 con Python compatible.
 
-**4.0.0-rc24 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
+**4.0.0-rc25 es candidata.** Las pruebas locales y de CI no reemplazan el preflight Linux, las pruebas nativas de Vector en destino ni la aceptación de métricas en Better Stack. No hay despliegues masivos automáticos.
 
 **No usar rc8:** se conserva como artefacto histórico; su escritura de permisos y reversión tienen fallos corregidos en rc9.
 
@@ -20,12 +20,12 @@ El código público no contiene perfiles reales, fuentes de clientes, tokens ni 
 
 ## Descargar y verificar
 
-Descargar `releases/4.0.0-rc24/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
+Descargar `releases/4.0.0-rc25/installer.sh` desde un **commit completo e identificado**, nunca ejecutar el contenido cambiante de `main` mediante un pipe. El commit y el SHA256 de confianza se comunican junto a cada entrega. Ver [verificación](docs/VERIFICATION.md).
 
 Ejemplo de flujo, sustituyendo los marcadores por el commit y digest verificados de la entrega:
 
 ```bash
-wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc24/installer.sh'
+wget --https-only -O /root/installer.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc25/installer.sh'
 printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer.sh | sha256sum --check
 ```
 
@@ -210,3 +210,12 @@ La agrupación opcional rc21–rc23 dependía sólo del tiempo de llegada y pod�
 El temporizador de emisión sigue siendo de 300 segundos y puede tener demora de planificación, lectura y envío; no es una garantía de recepción en tiempo real. No espera a completar una ventana de fecha original ni reabre resúmenes ya emitidos. Los críticos, otros tipos y fechas no interpretadas pasan íntegros. Conserva lectores, métricas, filtros y checkpoints. No activa cron ni contexto cPanel.
 
 Para corregir una base minimal-v4 rc21/rc22/rc23 revisada, ejecutar preflight y upgrade con --aggregate-errors y luego verify. Sin esa opción conserva el grafo existente. Sólo Vector se reinicia para aplicar el grafo; no se reinician aplicaciones. Candidata pendiente de recepción remota después de instalar. Los observer-v4 aceptados en rc21 no requieren esta corrección.
+
+
+## rc25: reparto del presupuesto de accesos por demanda
+
+Distribuye el mismo presupuesto de 8 MiB por ciclo según los bytes pendientes de cada domlog, satisfaciendo primero las colas pequeñas y repartiendo de forma equitativa lo restante. Conserva el máximo de 2 MiB por archivo y el orden rotativo. Evita omisiones artificiales de un archivo con más tráfico cuando el conjunto de archivos cabe en el presupuesto.
+
+La lectura sigue abriendo cada archivo una sola vez. El crecimiento concurrente puede usar capacidad libre y compartir el presupuesto reservado sin dejar sin lectura a los archivos activos conocidos. No cambia los offsets de entrada, la inicialización sin historial, el parser, los timers ni la política de incidentes. Los errores de formato, rotaciones y límites reales siguen dando cobertura parcial. No recupera bytes ya omitidos.
+
+Añade duplika_access_read_bytes y duplika_access_max_file_backlog_bytes, dos métricas agregadas por host, sin rutas ni contenido de logs. Permiten distinguir presión de lectura y topes por archivo sin aumentar el volumen de detalles. La actualización observer-v4 conserva Vector, lectores, credenciales, almacenamiento y estado; verifica un ciclo nuevo. La agrupación opcional rc24 permanece idéntica y los perfiles heredados no incorporan este colector por una actualización de identidad. Candidata para piloto; la mejora real de cobertura y consumo debe comprobarse remotamente.

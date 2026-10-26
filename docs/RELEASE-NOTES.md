@@ -1,3 +1,11 @@
+# 4.0.0-rc25 — candidata: presupuesto de accesos por demanda
+
+El reparto anterior podía omitir parte de un domlog grande aun cuando el tráfico conjunto cabía holgadamente en el presupuesto. rc25 calcula cuotas por bytes pendientes: satisface primero las colas pequeñas y reparte lo restante entre las grandes. Conserva 8 MiB por ciclo, 2 MiB por archivo, rotación de prioridad, una apertura por archivo, cadencias, parser y estado. El crecimiento tras el descubrimiento aprovecha capacidad libre y puede compartir la reserva de forma acotada, conservando lectura para archivos activos conocidos.
+
+Dos nuevas métricas agregadas por host muestran bytes leídos y el máximo backlog observado por archivo. No exportan rutas ni contenido. La cobertura sigue siendo parcial ante rotaciones, inicialización, errores de formato, archivos inaccesibles o límites reales. No recupera datos omitidos ni retrocede cursores.
+
+La regresión sintética de un archivo con más tráfico y mil pequeños falla con el colector rc21 publicado y pasa con rc25; verifica lectura completa dentro del presupuesto, offsets finales y ausencia de replay. También se verifican exceso real de presupuesto, equidad, límite por archivo, crecimiento concurrente y una apertura por archivo. Admite rc24 con hashes del payload original; mantiene las rutas previas y su reversión. La agrupación rc24, las referencias legacy y los artefactos anteriores quedan intactos. Candidata pendiente de aceptación remota y comparación del consumo en piloto.
+
 # 4.0.0-rc24 — candidata: grupos acotados por fecha original
 
 Corrige la agrupación opcional minimal-v4: los temporizadores de llegada de rc21–rc23 no garantizaban una distancia máxima de 300 segundos entre fechas originales. rc24 agrupa además por ventana fija UTC de cinco minutos calculada desde la fecha original. Conserva precisión de microsegundos y cantidades; cada resumen abarca menos de 300 segundos. Una llegada tardía puede emitir otro resumen para una ventana anterior: sumar occurrences, no contar filas. La clave interna se elimina antes de enviar. El tiempo de recepción sigue sujeto a los temporizadores y al transporte.
