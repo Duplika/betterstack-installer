@@ -12,7 +12,7 @@ La migración context-r6 de rc9 tenía una suposición de ruta local de vector.s
 
 - rc26 conserva las correcciones de agrupación opcional rc24 y el reparto de accesos por demanda; rc25 está retirada para actualizaciones observer-v4.
 - [Operación](docs/OPERATIONS.md) describe las frecuencias y la aceptación por layout. Una versión de identidad no prueba qué recolector o funcionalidades tiene instalado un pipeline heredado.
-- [Plan de optimización](docs/MONITORING-PLAN.md): precisión de dashboards, diagnóstico de formatos, exportación por sitio cada cinco minutos y retirada revisada de mediciones duplicadas. Es una propuesta para la siguiente candidata, no una capacidad ya instalada.
+- [Plan de optimización](docs/MONITORING-PLAN.md): precisión de dashboards, diagnóstico de formatos, exportación por sitio cada hora y retirada revisada de mediciones duplicadas. Es una propuesta para la siguiente candidata, no una capacidad ya instalada.
 - [Semántica de dashboards](docs/DASHBOARDS.md): bloque agregado, frescura y diferencias entre estado reciente e historial.
 
 ## Qué detecta
