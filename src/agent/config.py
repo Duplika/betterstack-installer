@@ -1,6 +1,34 @@
 """Vector transport, with no access to application home directories."""
 import json
 
+def essential_config(config):
+    """Reviewed observer-only graph: real storage is measured by its own probe."""
+    import copy
+    result = copy.deepcopy(config)
+    host = result['sources']['host']
+    host['collectors'] = ['cpu', 'load', 'host', 'memory']
+    host.pop('filesystem', None)
+    result['sources']['host_slow'] = {'type': 'host_metrics', 'scrape_interval_secs': 300,
+                                      'collectors': ['disk', 'network']}
+    result['transforms']['host_json']['inputs'] = ['host', 'host_slow']
+    result['transforms']['host_essential'] = {'type': 'filter', 'inputs': ['host_format'],
+        'condition': '!starts_with(string!(.name), "memory_") || includes(["memory_total_bytes", "memory_available_bytes", "memory_swap_total_bytes", "memory_swap_used_bytes", "memory_oom_kill_events_total"], .name)'}
+    result['sinks']['metrics']['inputs'] = ['metrics_json', 'host_essential']
+    result['tests'] += [
+        {'name': 'essential memory keeps availability', 'inputs': [{'insert_at': 'host_essential',
+            'type': 'log', 'log_fields': {'name': 'memory_available_bytes', 'gauge': {'value': 123}}}],
+         'outputs': [{'extract_from': 'host_essential', 'conditions': [{'type': 'vrl',
+             'source': 'assert_eq!(.name, "memory_available_bytes")'}]}]},
+        {'name': 'unused memory is dropped', 'inputs': [{'insert_at': 'host_essential',
+            'type': 'log', 'log_fields': {'name': 'memory_cached_bytes', 'gauge': {'value': 123}}}],
+         'no_outputs_from': ['host_essential']},
+        {'name': 'slow disk metrics keep names', 'inputs': [{'insert_at': 'host_essential',
+            'type': 'log', 'log_fields': {'name': 'disk_read_bytes_total', 'counter': {'value': 123}}}],
+         'outputs': [{'extract_from': 'host_essential', 'conditions': [{'type': 'vrl',
+             'source': 'assert_eq!(.name, "disk_read_bytes_total")'}]}]},
+    ]
+    return result
+
 def make_config(profile, token, ingest):
     root = '/var/lib/duplika-betterstack-cloudlinux'
     def files(pattern):
@@ -54,5 +82,5 @@ def make_config(profile, token, ingest):
          'outputs': [{'extract_from': 'host_format', 'conditions': [{'type': 'vrl', 'source':
               'assert_eq!(.name, "load1")\nassert_eq!(.tags.server_ip, ' + json.dumps(profile['server_ip']) + ')'}]}]},
     ]
-    return result
+    return essential_config(result) if profile.get('monitoring_policy') == 'essential-v1' else result
 

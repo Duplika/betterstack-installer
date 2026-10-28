@@ -10,6 +10,7 @@ import context_cleanup
 import error_aggregation
 import threading
 import copy
+import config as observer_config
 
 
 def main():
@@ -35,6 +36,12 @@ def main():
     check_aggregation(args.vector, aggregation, native_dates=True)
     check_reader_aggregation(args.vector, aggregation)
     check_event_time_bound(args.vector, aggregation)
+    essential = observer_config.make_config({'host': 'cloud.example.net', 'server_ip': '203.0.113.20',
+        'monitoring_policy': 'essential-v1'}, 'TEST_SECRET', 's1234568.us-west-2a.betterstackdata.com')
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / 'essential.json'; path.write_text(json.dumps(essential))
+        subprocess.run([args.vector, 'test', '--config-json', str(path)], check=True, timeout=120)
+        subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(path)], check=True, timeout=120)
     print('Synthetic context cleanup: ' + str(len(config['tests'])) + ' native Vector cases passed.')
 
 

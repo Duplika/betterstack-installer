@@ -1,3 +1,7 @@
+# Operación actual: candidata rc27
+
+La nueva política requiere selección explícita desde rc26 completo. Ver [procedimiento esencial](ESSENTIAL-MONITORING.md) y [README](../README.md). Las siguientes secciones se conservan como historial de rutas y recuperación; no describen la frecuencia de la política esencial.
+
 # Procedimiento actual rc19
 
 No usar rc18 para continuar actualizaciones rc6/rc7: rc19 contempla perfiles originales conservados por actualizaciones de identidad. Un fallo de preflight por versión del perfil no autoriza editarlo ni rebaselinar.

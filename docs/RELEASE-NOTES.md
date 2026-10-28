@@ -1,3 +1,13 @@
+# 4.0.0-rc27 — candidata: monitoreo esencial explícito desde rc26
+
+Incorpora --essential-monitoring para preflight/upgrade de observer-v4 rc26 con almacenamiento validado. No modifica los artefactos anteriores ni referencias legacy. La opción retira filesystem de Vector, separa red/I/O a 300 s y filtra memoria sin consumidores. Mantiene CPU/RAM/carga y salud global cada 60 s.
+
+El ciclo esencial no invoca accesos, procesos por usuario, cloudlinux-top o lectores WordPress de forma rutinaria. Reemplaza el muestreo general de cuentas por una consulta histórica cerrada de 900 s con un minuto de margen. El filtro remoto por fallos se verifica nuevamente por recurso con umbral estricto mayor que 10; no suma fallos distintos ni selecciona por porcentaje. Sólo exporta logs de cuentas afectadas y salud global. El inventario emite recuentos cada 43200 s y cachea el mapa con invalidación por metadatos.
+
+Los diagnósticos de cuenta exacta tienen lectores explícitos y vencimiento máximo 60 min. WordPress requiere rutas/sandbox previamente aprobados; no abre nuevos docroots. La migración valida schema histórico, cobertura real de volúmenes y Vector nativo, conserva transporte/cursores, exige un ciclo nuevo con marcador de política y revierte ante fallo. Los endpoints temporales, disponibilidad/semántica de fault counters y costo real deben verificarse en el servidor antes de aceptar el piloto.
+
+Los dashboards distinguen monitoreo esencial del anterior y dejan de interpretar datos retirados como fallos. No se activa ni instala en un servidor al publicar la candidata. No se garantiza ahorro antes de la comparación remota.
+
 # 4.0.0-rc26 — candidata: etiqueta real del ciclo y control de empaquetado
 
 Corrige el rechazo de actualización observer-v4 de rc25. Su colector ejecutaba el reparto nuevo pero escribía COLLECTOR_RELEASE rc21 en el marcador; verify_new_observer_cycle exigía la versión candidata y la transacción revertía la actualización. rc26 alinea ambas versiones, sin relajar la comprobación de versión, frescura, inicio del ciclo ni componentes fallidos. Mantiene el reparto de accesos y sus límites.
