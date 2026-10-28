@@ -6,7 +6,7 @@ Estado: propuesta de implementación; no cambia el runtime rc26 ni habilita desp
 
 1. Corregir primero la semántica de los dashboards, sin cambiar alertas ni agentes.
 2. Añadir diagnóstico acotado de calidad y duración por componente; investigar formatos reales localmente, sin exportar contenido.
-3. Separar lectura por minuto de exportación por sitio cada 300 segundos y reducir sus familias por defecto.
+3. Separar lectura por minuto de exportación por sitio cada 3600 segundos y reducir sus familias por defecto.
 4. Retirar el colector filesystem de Vector únicamente en layouts que ya tengan la sonda dedicada completa y verificada.
 5. Comparar un piloto con baseline y avanzar por lotes después de aceptar cobertura, cadencias, costo y rollback.
 
@@ -17,7 +17,7 @@ Estado: propuesta de implementación; no cambia el runtime rc26 ni habilita desp
 | CPU/RAM/carga del host | 60 s | Mantener 60 s |
 | Lectura de accesos y detección de 5xx | 60 s | Mantener 60 s |
 | Calidad de lectura y heartbeat | 60 s | Mantener 60 s |
-| Métricas por sitio | Cinco familias cada 60 s cuando hay observación | Tres familias agregadas cada 300 s |
+| Métricas por sitio | Cinco familias cada 60 s cuando hay observación | Tres familias agregadas cada 3600 s |
 | Procesos por usuario y LVE | 300 s | Mantener; perfilar cada componente |
 | Capacidad/inodos/RAID | Sonda 60 s y filesystem de Vector en paralelo | Una sola medición de capacidad mediante sonda validada |
 | SMART | Hasta una consulta por disco cada 6 h | Mantener; distinguir desconocido de sano |
@@ -33,11 +33,11 @@ Conservar por defecto:
 
 Retirar del envío rutinario `duplika_site_dynamic_requests_per_second` y `duplika_site_errors_4xx_per_second`. El segundo puede quedar disponible en diagnóstico temporal con vencimiento si hay un uso concreto. La retirada de métricas no debe eliminar el conteo local necesario para incidentes.
 
-Leer cada minuto y acumular contadores por sitio; publicar una vez por ventana de 300 segundos. La tasa debe ser suma de conteos dividida por el tiempo realmente observado. No promediar tasas sin ponderarlas, ni tomar sólo la última muestra. Identificar fecha de final de ventana, duración y calidad. Ventanas incompletas, reinicios y saltos de reloj requieren contrato explícito; no emitir ceros de relleno ni repetir datos viejos.
+La exportación horaria y la frecuencia de lectura son decisiones distintas. En esta propuesta, leer cada minuto y acumular contadores por sitio; publicar una vez por ventana de 3600 segundos. La tasa debe ser suma de conteos dividida por el tiempo realmente observado. No promediar tasas sin ponderarlas, ni tomar sólo la última muestra. Identificar fecha de final de ventana, duración y calidad. Ventanas incompletas, reinicios y saltos de reloj requieren contrato explícito; no emitir ceros de relleno ni repetir datos viejos.
 
-Un 5xx debe seguir generando su evento en el siguiente ciclo de lectura; su recuperación sigue requiriendo observación completa. La tasa agregada de cinco minutos no equivale al pico de un minuto. Adaptar nombres/explicaciones del gráfico y comprobar si el pico debe mantenerse como dato adicional de incidente. No afirmar que el umbral o el tiempo de detección se mantienen sólo porque el total de errores coincida.
+Un 5xx debe seguir generando su evento en el siguiente ciclo de lectura; su recuperación sigue requiriendo observación completa. La tasa agregada de una hora no equivale al pico de un minuto. Adaptar nombres/explicaciones del gráfico y comprobar si el pico debe mantenerse como dato adicional de incidente. No afirmar que el umbral o el tiempo de detección se mantienen sólo porque el total de errores coincida.
 
-Bajo el supuesto de que los mismos sitios estén activos en todos los ciclos, pasar de cinco familias por minuto a tres cada cinco minutos reduce sus muestras de 25 a 3 por cinco minutos: 88%. Es un cálculo de cadencia/familias, no una medición de ahorro de CPU, bytes facturados o toda la flota. Sitios esporádicos y la unión de sitios por ventana cambian el ahorro real.
+Bajo el supuesto de que los mismos sitios estén activos en todos los ciclos, pasar de cinco familias por minuto a tres cada hora reduce sus muestras de 300 a 3 por hora: 99%. Es un cálculo de cadencia/familias, no una medición de ahorro de CPU, bytes facturados o toda la flota. Sitios esporádicos y la unión de sitios por ventana cambian el ahorro real.
 
 ### Eliminar duplicación de capacidad en origen
 
@@ -48,6 +48,12 @@ La siguiente migración debe verificar cobertura de cada volumen local esperado,
 No retirar `filesystem_*` de pipelines heredados sin una migración específica que primero aporte la sonda. Los dashboards conservarán fallback por layout, no enviarán ambas familias permanentemente. Si la sonda falla después, debe alertarse su falta: no recuperar silenciosamente una lectura del sandbox y presentarla como medición equivalente.
 
 Migrar mediante hashes oficiales, pruebas Vector nativas, backup y rollback. Conservar fuente, credenciales, data_dir, buffers, cursores y offsets. No modificar artefactos rc26 ni referencias legacy.
+
+## Alcance de la detección de errores
+
+Hay lectores independientes. El lector de errores globales consulta las rutas de servidor incluidas en `error_logs`; el lector de kernel consulta su journal. El conteo HTTP 5xx por sitio proviene de los accesos canónicos de los dominios reconocidos en `domlog_roots`, no del error log global. La lectura de logs WordPress por sitio es opcional, explícita y con vencimiento; no se recorren todos los sitios buscando sus error_log o debug.log.
+
+Publicar métricas cada hora reduce envío, pero mantener lectura de accesos cada minuto conserva ese trabajo local. Si el alcance requerido por minuto es sólo errores globales/kernel, se puede proponer además lectura de accesos por hora: eso reduce trabajo local, pero la detección de 5xx de accesos pasa también a horaria. No confundir ambas garantías ni aplicar ese cambio adicional como si fuera únicamente una modificación del envío.
 
 ## Diagnóstico y parser
 
@@ -69,7 +75,7 @@ Después de medir, priorizar: quitar clasificación de rutas/UA que no tenga con
 
 Preparar la siguiente candidata desde el commit rc26 fijado, con ruta de upgrade estricta desde rc26 y sin adoptar estados rc25 incompletos. Seleccionar un host con tráfico suficiente y mantener el resto como referencia; los nombres y resultados operativos permanecen fuera del repositorio público.
 
-Comparar ventanas equivalentes de 24 horas y comprobar inicialmente al menos dos ventanas de exportación completas. Un piloto corto demuestra funcionamiento, no ahorro diario estable.
+Comparar ventanas equivalentes de 24 horas y comprobar inicialmente al menos dos ventanas horarias de exportación completas. Un piloto corto demuestra funcionamiento, no ahorro diario estable.
 
 - Recepción reciente de host, colector y sonda; LVE/procesos cada 300 s.
 - Eventos 5xx y recuperación con misma lectura por minuto; conteos sintéticos conservados.
