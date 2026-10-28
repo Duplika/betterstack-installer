@@ -6,7 +6,7 @@ Estado: propuesta de implementación; no cambia el runtime rc26 ni habilita desp
 
 1. Corregir primero la semántica de los dashboards, sin cambiar alertas ni agentes.
 2. Añadir diagnóstico acotado de calidad y duración por componente; investigar formatos reales localmente, sin exportar contenido.
-3. Separar lectura por minuto de exportación por sitio cada 3600 segundos y reducir sus familias por defecto.
+3. Pasar lectura de accesos por sitio y exportación de sus métricas a 3600 segundos, separadas del ciclo global de un minuto; reducir sus familias por defecto.
 4. Retirar el colector filesystem de Vector únicamente en layouts que ya tengan la sonda dedicada completa y verificada.
 5. Comparar un piloto con baseline y avanzar por lotes después de aceptar cobertura, cadencias, costo y rollback.
 
@@ -15,8 +15,8 @@ Estado: propuesta de implementación; no cambia el runtime rc26 ni habilita desp
 | Grupo | Vigente en observer-v4 rc26 | Propuesta |
 | --- | --- | --- |
 | CPU/RAM/carga del host | 60 s | Mantener 60 s |
-| Lectura de accesos y detección de 5xx | 60 s | Mantener 60 s |
-| Calidad de lectura y heartbeat | 60 s | Mantener 60 s |
+| Lectura de accesos y detección de 5xx por sitio | 60 s | Cada 3600 s; los 5xx de accesos dejan de detectarse por minuto |
+| Calidad de lectura y heartbeat | 60 s | Heartbeat global 60 s; calidad de accesos al realizar la lectura horaria |
 | Métricas por sitio | Cinco familias cada 60 s cuando hay observación | Tres familias agregadas cada 3600 s |
 | Procesos por usuario y LVE | 300 s | Mantener; perfilar cada componente |
 | Capacidad/inodos/RAID | Sonda 60 s y filesystem de Vector en paralelo | Una sola medición de capacidad mediante sonda validada |
@@ -33,9 +33,11 @@ Conservar por defecto:
 
 Retirar del envío rutinario `duplika_site_dynamic_requests_per_second` y `duplika_site_errors_4xx_per_second`. El segundo puede quedar disponible en diagnóstico temporal con vencimiento si hay un uso concreto. La retirada de métricas no debe eliminar el conteo local necesario para incidentes.
 
-La exportación horaria y la frecuencia de lectura son decisiones distintas. En esta propuesta, leer cada minuto y acumular contadores por sitio; publicar una vez por ventana de 3600 segundos. La tasa debe ser suma de conteos dividida por el tiempo realmente observado. No promediar tasas sin ponderarlas, ni tomar sólo la última muestra. Identificar fecha de final de ventana, duración y calidad. Ventanas incompletas, reinicios y saltos de reloj requieren contrato explícito; no emitir ceros de relleno ni repetir datos viejos.
+Leer accesos y publicar sus métricas una vez por ventana de 3600 segundos, según el alcance confirmado. La detección de errores globales del servidor y kernel conserva su ciclo de 60 segundos. No ejecutar el lector de accesos ni el clasificador de rutas/UA en los ciclos intermedios.
 
-Un 5xx debe seguir generando su evento en el siguiente ciclo de lectura; su recuperación sigue requiriendo observación completa. La tasa agregada de una hora no equivale al pico de un minuto. Adaptar nombres/explicaciones del gráfico y comprobar si el pico debe mantenerse como dato adicional de incidente. No afirmar que el umbral o el tiempo de detección se mantienen sólo porque el total de errores coincida.
+La tasa debe ser suma de conteos dividida por el tiempo realmente observado; no tomar sólo una muestra instantánea y llamarla promedio horario. Ventanas incompletas, reinicios y saltos de reloj requieren contrato explícito; no emitir ceros de relleno ni repetir datos viejos. La detección y recuperación de incidentes HTTP 5xx basadas en accesos pasan a horarias; los errores que aparezcan en logs globales siguen revisándose cada minuto. Adaptar los gráficos y retirar cualquier promesa de detección por sitio en un minuto.
+
+Los límites rc26 son por ejecución: 8 MiB por ciclo y 2 MiB por archivo. No reutilizarlos sin evaluar el volumen de una hora: pueden descartar tráfico que antes se procesaba minuto a minuto. La siguiente candidata debe elegir un presupuesto horario acotado con lectura en chunks, tiempo/CPU limitados y calidad explícita; si no puede cubrir el volumen, declarar muestreo parcial. No aumentar límites indiscriminadamente ni recuperar historia desde cero. Leer una hora puede concentrar trabajo y procesar los mismos bytes totales: menos ejecuciones y menos muestras no garantizan una reducción proporcional de CPU.
 
 Bajo el supuesto de que los mismos sitios estén activos en todos los ciclos, pasar de cinco familias por minuto a tres cada hora reduce sus muestras de 300 a 3 por hora: 99%. Es un cálculo de cadencia/familias, no una medición de ahorro de CPU, bytes facturados o toda la flota. Sitios esporádicos y la unión de sitios por ventana cambian el ahorro real.
 
@@ -53,7 +55,9 @@ Migrar mediante hashes oficiales, pruebas Vector nativas, backup y rollback. Con
 
 Hay lectores independientes. El lector de errores globales consulta las rutas de servidor incluidas en `error_logs`; el lector de kernel consulta su journal. El conteo HTTP 5xx por sitio proviene de los accesos canónicos de los dominios reconocidos en `domlog_roots`, no del error log global. La lectura de logs WordPress por sitio es opcional, explícita y con vencimiento; no se recorren todos los sitios buscando sus error_log o debug.log.
 
-Publicar métricas cada hora reduce envío, pero mantener lectura de accesos cada minuto conserva ese trabajo local. Si el alcance requerido por minuto es sólo errores globales/kernel, se puede proponer además lectura de accesos por hora: eso reduce trabajo local, pero la detección de 5xx de accesos pasa también a horaria. No confundir ambas garantías ni aplicar ese cambio adicional como si fuera únicamente una modificación del envío.
+El alcance confirmado para la siguiente candidata es: accesos y métricas por sitio cada hora; logs globales/kernel y métricas esenciales cada minuto. Se retira el acceso por minuto incluso si no genera eventos remotos. WordPress por sitio queda como diagnóstico explícito y temporal, no como lectura general por minuto. Los ciclos de LVE/procesos siguen vigentes en cinco minutos hasta decidir su política por separado.
+
+Ver [inventario completo](METRICS-INVENTORY.md) para distinguir medición, envío, logs bajo demanda y propuestas aún no acordadas.
 
 ## Diagnóstico y parser
 
@@ -78,7 +82,7 @@ Preparar la siguiente candidata desde el commit rc26 fijado, con ruta de upgrade
 Comparar ventanas equivalentes de 24 horas y comprobar inicialmente al menos dos ventanas horarias de exportación completas. Un piloto corto demuestra funcionamiento, no ahorro diario estable.
 
 - Recepción reciente de host, colector y sonda; LVE/procesos cada 300 s.
-- Eventos 5xx y recuperación con misma lectura por minuto; conteos sintéticos conservados.
+- Errores globales/kernel por minuto; eventos 5xx de accesos y recuperación sólo en ventanas horarias, con conteos y cobertura documentados.
 - Calidad por causa sin pérdida adicional; no convertir desconocidos en ceros.
 - Muestras y bytes por familia, incluyendo nuevos diagnósticos; no equiparar muestras a facturación.
 - CPU total por cgroup, pico de memoria, duración por componente y throttling.
