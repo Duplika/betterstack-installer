@@ -1,3 +1,51 @@
+> Referencia de documentación: rc26 está en el [PR #7](https://github.com/Duplika/betterstack-installer/pull/7), commit `777e541b43b2a625d966d6f66b4adbe42636b32b`. El runtime de `main` sigue en rc21 hasta integrar la candidata. Las notas describen los cambios de cada versión, no certifican el estado de una flota. Las optimizaciones siguientes están en [propuesta](MONITORING-PLAN.md).
+
+# 4.0.0-rc26 — candidata: etiqueta real del ciclo y control de empaquetado
+
+Corrige el rechazo de actualización observer-v4 de rc25. Su colector ejecutaba el reparto nuevo pero escribía COLLECTOR_RELEASE rc21 en el marcador; verify_new_observer_cycle exigía la versión candidata y la transacción revertía la actualización. rc26 alinea ambas versiones, sin relajar la comprobación de versión, frescura, inicio del ciclo ni componentes fallidos. Mantiene el reparto de accesos y sus límites.
+
+El builder rechaza un marcador de versión ausente o distinto del instalador. La nueva integración extrae el colector del payload distribuido, ejecuta main con inventario/probes sintéticos, escribe spool/estado/marcador reales y llama al verificador de upgrade. Reproduce el fallo con el artefacto rc25 congelado y verifica el payload actual. No fabrica un JSON con la versión esperada. Los artefactos anteriores, la agrupación rc24 y las referencias legacy quedan intactos. No usar rc25 para observer-v4 ni forzar una instalación tras rollback incompleto. Candidata pendiente de aceptación remota.
+
+# 4.0.0-rc25 — retirada para observer-v4: presupuesto conservado en rc26
+
+El reparto anterior podía omitir parte de un domlog grande aun cuando el tráfico conjunto cabía holgadamente en el presupuesto. rc25 calcula cuotas por bytes pendientes: satisface primero las colas pequeñas y reparte lo restante entre las grandes. Conserva 8 MiB por ciclo, 2 MiB por archivo, rotación de prioridad, una apertura por archivo, cadencias, parser y estado. El crecimiento tras el descubrimiento aprovecha capacidad libre y puede compartir la reserva de forma acotada, conservando lectura para archivos activos conocidos.
+
+Dos nuevas métricas agregadas por host muestran bytes leídos y el máximo backlog observado por archivo. No exportan rutas ni contenido. La cobertura sigue siendo parcial ante rotaciones, inicialización, errores de formato, archivos inaccesibles o límites reales. No recupera datos omitidos ni retrocede cursores.
+
+La regresión sintética de un archivo con más tráfico y mil pequeños falla con el colector rc21 publicado y pasa con rc25; verifica lectura completa dentro del presupuesto, offsets finales y ausencia de replay. También se verifican exceso real de presupuesto, equidad, límite por archivo, crecimiento concurrente y una apertura por archivo. Admite rc24 con hashes del payload original; mantiene las rutas previas y su reversión. La agrupación rc24, las referencias legacy y los artefactos anteriores quedan intactos. Candidata pendiente de aceptación remota y comparación del consumo en piloto.
+
+# 4.0.0-rc24 — candidata: grupos acotados por fecha original
+
+Corrige la agrupación opcional minimal-v4: los temporizadores de llegada de rc21–rc23 no garantizaban una distancia máxima de 300 segundos entre fechas originales. rc24 agrupa además por ventana fija UTC de cinco minutos calculada desde la fecha original. Conserva precisión de microsegundos y cantidades; cada resumen abarca menos de 300 segundos. Una llegada tardía puede emitir otro resumen para una ventana anterior: sumar occurrences, no contar filas. La clave interna se elimina antes de enviar. El tiempo de recepción sigue sujeto a los temporizadores y al transporte.
+
+Sólo LSAPI abort y SQL Commands out of sync no críticos se agrupan. Críticos, otros errores y fechas no interpretadas pasan íntegros. No elimina lectores ni agrega sondeos, cron o contexto cPanel. No modifica filtros, fuentes, credenciales, métricas, buffers ni checkpoints. Los resúmenes siguen teniendo estado en memoria, sin garantía de auditoría y sin corregir la causa de aplicación.
+
+La migración explícita --aggregate-errors reconoce el payload y el grafo originales rc23 además de rc21/rc22; rechaza drift. Reinicia únicamente Vector. Las pruebas nativas del lector completo verifican ráfagas tardías, orden alterado, offsets UTC, bordes exactos con microsegundos, conteos, rutas críticas y cierre del temporizador con la entrada abierta. El caso de borde falla contra el grafo rc23 congelado. Pruebas de migración y reversión preservan configuración ajena, permisos y cursores. Los artefactos previos quedan inmutables. Candidata pendiente de aceptación remota.
+
+# 4.0.0-rc23 — candidata: fechas nativas del lector y conteos completos
+
+Sustituye la agrupación opcional rc22. La normalización heredada entrega dt como timestamp nativo de VRL. rc22 sólo probaba fechas JSON en texto: su aserción string!(.dt) abortaba el remap y el evento original continuaba hacia reduce, sin occurrences ni first_seen/last_seen. Las métricas del host y los lectores seguían funcionando, pero no debía considerarse validada esa agrupación.
+
+rc23 serializa tanto timestamps VRL como fechas en texto con to_string antes de parsearlos y reducir enteros de microsegundos. Conserva conteos y dt/first_seen/last_seen exactos. Si el lector marca timestamp_unparsed, el evento pasa completo, sin convertir la fecha de observación en una fecha original. Los críticos mantienen su ruta completa.
+
+La prueba nativa recorre ahora normalize_errors → useful_errors → agrupación con el parser y filtro originales. Verifica eventos LSAPI y SQL sintéticos, timestamps VRL reales, fechas en texto, offsets UTC, orden alterado, conteos, precisión de microsegundos, bypass crítico y fechas no interpretadas; rechaza advertencias de mapping/reduce. La prueba rc22 anterior con fechas convertidas a timestamp reproduce el fallo antes de la corrección.
+
+Admite migración explícita desde los artefactos originales rc21 y rc22 mediante `preflight --aggregate-errors`, `upgrade --aggregate-errors` y `verify`. Comprueba el runtime, las configuraciones congeladas y la integridad antes de reemplazar el grafo. Conserva fuentes, lectores, métricas, credenciales, permisos, propietarios, buffers y cursores. Reinicia únicamente Vector para aplicar el ajuste; la transacción de reversión se prueba con el payload rc22 original.
+
+No usar la agrupación rc22 para nuevas instalaciones. Las releases anteriores permanecen inmutables. Los observer-v4 sin agrupación opcional pueden permanecer en rc21. No reconstruye conteos o fechas ausentes en resúmenes históricos. Candidata pendiente de aceptación remota tras instalarla.
+
+# 4.0.0-rc22 — candidata: fechas originales en resúmenes de errores
+
+Corrige la agrupación opcional de rc21 para el transporte heredado minimal-v4. Vector reduce sólo acepta números en min/max; rc21 descartaba dt, first_seen y last_seen al recibir fechas ISO como texto. Los conteos se conservaban, pero Better Stack usaba una fecha de recepción en lugar de la fecha original.
+
+rc22 convierte las fechas a enteros de microsegundos antes de reducir y reconstruye dt/first_seen/last_seen en UTC después. dt corresponde al primer evento. Conserva el conteo, separación por sitio/tipo/gravedad y cierre de hasta300s. Soporta eventos fuera de orden y distintas zonas horarias. Fechas inválidas o ausentes pasan por la ruta completa sin agrupar; no se inventan fechas originales. Los críticos y demás eventos siguen pasando completos.
+
+`preflight --aggregate-errors` y `upgrade --aggregate-errors` reconocen el artefacto original rc21, verifican su runtime, configuración exacta e integridad y sustituyen sólo el grafo de agrupación revisado. Conservan fuentes, lectores, credenciales, métricas, data_dir, buffers y cursores. Reinician únicamente Vector para aplicar el grafo; hay respaldo/reversión de configuración y unidades. Los grupos aún en memoria no son un registro de auditoría. No se recuperan fechas ya descartadas por resúmenes antiguos.
+
+La actualización sin esa opción conserva el grafo heredado existente; no activar la agrupación implícitamente. Los servidores observer-v4 en rc21 no necesitan esta corrección. rc21 y todas las releases anteriores permanecen inmutables.
+
+Pruebas nativas de Vector0.60.0 verifican fechas exactas y precisión de microsegundos, entrada fuera de orden/offsets UTC, conteos, sitios separados, cierre por temporizador con entrada abierta, bypass crítico/fechas inválidas y ausencia de advertencias de combinación. Las pruebas con el payload rc21 original verifican migración explícita, preservación de permisos/propietarios/métricas/cursores, rechazo de drift y reversión ante fallo de transporte. Candidata pendiente de aceptación remota en destino.
+
 # 4.0.0-rc19 — candidata: perfiles conservados por actualizaciones antiguas
 
 Corrige el rechazo observer_profile_version_mismatch de rc18 al revisar una instalación rc6/rc7 que conserva un perfil anterior. Las actualizaciones oficiales rc4..rc7 reemplazaban identidad/mantenimiento, pero no reescribían el perfil del recolector. La versión instalada y la del perfil podían diferir legítimamente.

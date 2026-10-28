@@ -1,4 +1,22 @@
-# Procedimiento actual rc19
+# Procedimiento de referencia rc26
+
+La candidata está en el [PR #7](https://github.com/Duplika/betterstack-installer/pull/7), commit `777e541b43b2a625d966d6f66b4adbe42636b32b`; `main` conserva el runtime rc21 hasta su integración. No usar rc25 para actualizar observer-v4: su marcador de ciclo provoca rechazo y rollback. rc26 corrige el marcador y conserva las comprobaciones estrictas. Ver [notas de versión](RELEASE-NOTES.md) y [descarga verificable](VERIFICATION.md).
+
+| Señal o tarea en observer-v4 rc26 | Frecuencia vigente |
+| --- | --- |
+| CPU, RAM y métricas generales del host | 60 s |
+| Lectura de accesos, errores y calidad del colector | 60 s |
+| Métricas por sitio | 60 s, cinco familias; aún no reducidas |
+| Procesos/cuentas y LVE, cuando corresponde | 300 s, sin repetir valores entre consultas |
+| Volúmenes, inodos y RAID de la sonda dedicada | 60 s |
+| SMART, si está disponible | Como máximo una consulta por disco cada 6 h; repartidas entre ciclos |
+| Identidad/mantenimiento | Comprobación horaria; identidad inicial, ante cambios y diaria |
+
+El colector rc26 reparte 8 MiB por ciclo según demanda, con máximo 2 MiB por archivo. Cero bytes omitidos no certifica cobertura completa: revisar formato, rotación, inicialización, archivos inaccesibles y líneas sobredimensionadas. La reducción de métricas por sitio y la retirada de filesystem duplicado pertenecen al [siguiente plan](MONITORING-PLAN.md), no a rc26.
+
+Las notas de versiones anteriores que siguen explican rutas históricas. No son instrucciones para instalar una candidata antigua en lugar de rc26.
+
+## Antecedente rc19: perfiles de actualizaciones previas
 
 No usar rc18 para continuar actualizaciones rc6/rc7: rc19 contempla perfiles originales conservados por actualizaciones de identidad. Un fallo de preflight por versión del perfil no autoriza editarlo ni rebaselinar.
 
@@ -41,7 +59,7 @@ La identidad completa se envía inicialmente, ante cambios de estado/integridad/
 
 AlmaLinux 9 y CloudLinux 8/9 con cPanel para altas nuevas; también migraciones v3 revisadas de AlmaLinux 8 usando Python 3.9–3.12 ya instalado. EL8 requiere aceptación nativa de systemd/needs-restarting en destino. Los nombres históricos de unidades/directorios CloudLinux se conservan en instalaciones nuevas también sobre AlmaLinux para mantener un transporte probado; `os_id` informa el sistema real.
 
-Domlogs: presupuesto 8 MiB por ciclo y 2 MiB por archivo. Se informa pérdida de cobertura por topes/rotaciones/formato. Los buffers y spool son acotados. Procesos breves pueden escapar al muestreo de un minuto; consumo por usuario no equivale siempre a atribución exacta por dominio.
+Domlogs: presupuesto 8 MiB por ciclo y 2 MiB por archivo. Se informa pérdida de cobertura por topes/rotaciones/formato. Los buffers y spool son acotados. En observer-v4 rc26, procesos breves pueden escapar al muestreo de cinco minutos; consumo por usuario no equivale siempre a atribución exacta por dominio.
 
 Migraciones v3: conservar pipelines, ACL y extensiones existentes salvo reducción explícita --simplify-context de la base context-r6 revisada. rc8 admite además una migración específica de instalaciones nuevas observer-v4 rc3, rc4, rc5, rc6 y rc7: exige marcador completo, destino y capacidades iguales, hashes oficiales de los tres helpers, recolector y unidades de identidad, snapshot sin drift y servicios sanos. Respalda la capa de identidad y revierte si falla la activación; no modifica perfiles, Vector, recolector, checkpoints ni buffers. Otras versiones/layouts v4 requieren revisión explícita. `resume` se limita a terminar identidad sobre una base nueva ya completa y sin cambios; no repara una base incompleta.
 
@@ -138,3 +156,12 @@ rc16 queda sustituida para el piloto: su comprobación inicial podía intentar i
 rc17 mantiene la política eficiente de rc16 y, tras pausar el timer y reemplazar el código bajo lock, espera hasta60s a que la unidad esté inactiva antes de arrancar la nueva ejecución. No mata ciclos. Estado fallido/desconocido o timeout aborta con error específico/reversión. El marker ahora lleva versión del código y hora de inicio; se exige que sea de la versión nueva, haya comenzado después de iniciar el reemplazo, esté fresco y contenga procesos/LVE/accesos sin componentes fallidos. Un fichero viejo, incompleto o ausente no certifica éxito.
 
 No instalar rc16 ni forzar/rebaselinar un upgrade fallido. Si la reversión automática dejó rc15 completa/saludable, preflight y upgrade rc17 con el mismo perfil; sin rollback manual,credential,install ni cambios de fuente. La validación del destino/baseline determina si se puede continuar. Configuración Vector,almacenamiento,cadencias/política de logs y límites sin cambios respecto a rc16. La aceptación remota sigue pendiente; no extrapolar simulaciones a producción.
+
+
+## Dashboard: último bloque frente a último ciclo
+
+Better Stack selecciona la resolución de métricas según el rango. No presentar la media del último bloque como resultado de un único ciclo. En los resúmenes se identifican bloque y cantidad de muestras; cobertura usa mínimo y fallos máximo. El historial pondera por `metrics_count`. La edad se calcula respecto del final seleccionado y del timestamp del bloque, no del instante exacto de recepción. Para detalle reciente usar una ventana corta y revisar cada señal por separado. Ver [semántica y consultas](DASHBOARDS.md).
+
+## Diagnóstico del costo
+
+Separar CPU del colector con hijos, sonda, Vector e identidad. Comparar deltas de CPU por cgroup entre ventanas equivalentes; un contador acumulado de un servicio persistente no es CPU por ciclo. RSS máximo de hijos no equivale a memoria simultánea del conjunto. Revisar duración por componente y throttling antes de cambiar cuotas o cadencias. Reducir muestras enviadas por sitio no garantiza menor CPU si continúa la misma lectura y clasificación.

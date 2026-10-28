@@ -1,5 +1,9 @@
 # Descarga verificable
 
+## Referencia de candidata
+
+La candidata rc26 se obtiene del commit completo `777e541b43b2a625d966d6f66b4adbe42636b32b`, ruta `releases/4.0.0-rc26/installer.sh`, SHA256 `3ec34b076265e00995a00cd6db244fd0732952b3020265de1b4c50689a92474c`. El [PR #7](https://github.com/Duplika/betterstack-installer/pull/7) aún está separado del runtime rc21 de `main`. La presencia del archivo en una rama no demuestra que exista una GitHub Release publicada ni una atestación emitida. No usar rc25 para actualizaciones observer-v4.
+
 ## Trust inicial
 
 El instalador se ejecuta como root. Verificar el archivo antes de ejecutarlo; `wget ... | bash` no forma parte del procedimiento.
@@ -30,9 +34,11 @@ El workflow puede publicar manualmente una candidata como borrador, adjuntar tod
 
 Las comprobaciones criptográficas de releases inmutables son distintas de la atestación del build. Si la release está publicada y marcada inmutable, GitHub CLI compatible también permite:
 
+El operador debe definir `RELEASE_TAG` con una release realmente publicada e inmutable, sin asumir que rc26 ya cumple esas condiciones.
+
 ```bash
-gh release verify v4.0.0-rc7 --repo Duplika/betterstack-installer
-gh release verify-asset v4.0.0-rc7 /root/installer.sh --repo Duplika/betterstack-installer
+gh release verify "$RELEASE_TAG" --repo Duplika/betterstack-installer
+gh release verify-asset "$RELEASE_TAG" /root/installer.sh --repo Duplika/betterstack-installer
 ```
 
 No mover tags ni reemplazar assets publicados; corregir mediante una nueva versión.
