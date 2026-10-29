@@ -1,3 +1,11 @@
+# 4.0.0-rc28 — candidata: I/O privilegiado y salud sin falsos heartbeats inactivos
+
+La migración explícita --essential-monitoring acepta las bases oficiales rc26 observer-v4 y rc27 esencial con sonda. Conserva los artefactos anteriores, fuente, credencial, buffers, offsets y unidades del transporte/observador. El colector root ya existente lee I/O cada 300 s y emite los cuatro contadores disk_* de Vector 0.60; Vector conserva red cada 300 s y deja de leer disk. No cambia permisos del kernel, capacidades ni el usuario del transporte. Preflight exige muestras nativas del parser y el primer ciclo real instalado debe confirmar I/O; cualquier fallo revierte sin retroceder cursores. Un segundo vector.service activo bloquea la migración y nunca se inicia automáticamente.
+
+Identidad separa servicios, liveness y componentes degradados. El heartbeat válido no desaparece cuando LVE falla. status global, marcador local y métrica de fallos son coherentes; se conservan los datos de componentes sanos. El marcador incluye boot_id para no aceptar señal del arranque anterior. Los fallos de comandos conservan códigos y categorías fijas, sin salida cruda ni argumentos privados. Se mantiene diagnóstico temporal y el resto de frecuencias esenciales.
+
+Pruebas sintéticas cubren fallos/permisos/recuperación, reinicio, no replay, ventanas, migración de ambas bases y rollback conservando cursores. La candidata requiere aceptación nativa/remota del piloto; no se considera desplegada ni aceptada por aprobar las pruebas locales.
+
 # 4.0.0-rc27 — candidata: monitoreo esencial explícito desde rc26
 
 Incorpora --essential-monitoring para preflight/upgrade de observer-v4 rc26 con almacenamiento validado. No modifica los artefactos anteriores ni referencias legacy. La opción retira filesystem de Vector, separa red/I/O a 300 s y filtra memoria sin consumidores. Mantiene CPU/RAM/carga y salud global cada 60 s.

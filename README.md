@@ -1,6 +1,8 @@
-# Better Stack installer — candidata rc27
+# Better Stack installer — candidata rc28
 
-Monitoreo esencial para servidores cPanel con una migración explícita desde **observer-v4 rc26 completo con sonda de almacenamiento**. rc27 es candidata: no implica aceptación remota ni promoción a estable. Los artefactos previos y las referencias legacy se conservan intactos.
+Monitoreo esencial para servidores cPanel con una migración explícita desde **observer-v4 rc26 completo o rc27 esencial, con sonda de almacenamiento**. rc28 es candidata: no implica aceptación remota ni promoción a estable. Los artefactos previos y las referencias legacy se conservan intactos.
+
+rc28 mueve la lectura de I/O a su colector root ya existente, sin elevar privilegios de Vector ni cambiar protecciones del sistema. Separa la frescura del heartbeat de los componentes degradados y conserva diagnósticos de comandos clasificados, sin salida privada.
 
 ## Política esencial
 
@@ -23,30 +25,30 @@ No se emiten series normales por cuenta ni tráfico rutinario por sitio. No hay 
 Usar el commit completo y el digest comunicados con esta entrega. Nunca ejecutar un pipe de una rama cambiante:
 
 ```bash
-wget --https-only -O /root/installer-rc27.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc27/installer.sh'
-printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer-rc27.sh | sha256sum --check
+wget --https-only -O /root/installer-rc28.sh 'https://raw.githubusercontent.com/Duplika/betterstack-installer/COMMIT_VERIFICADO/releases/4.0.0-rc28/installer.sh'
+printf '%s  %s\n' 'SHA256_VERIFICADO' /root/installer-rc28.sh | sha256sum --check
 ```
 
 La candidata está empaquetada en el repositorio; eso no certifica una GitHub Release publicada o una atestación emitida. Ver [procedencia](docs/VERIFICATION.md).
 
-## Piloto sobre rc26
+## Piloto sobre rc26 o rc27
 
 ```bash
-bash /root/installer-rc27.sh preflight --essential-monitoring
-bash /root/installer-rc27.sh upgrade --essential-monitoring
-bash /root/installer-rc27.sh verify
+bash /root/installer-rc28.sh preflight --essential-monitoring
+bash /root/installer-rc28.sh upgrade --essential-monitoring
+bash /root/installer-rc28.sh verify
 ```
 
-Revisar primero la salida del preflight: valida historial/schema de CloudLinux, costo de esa consulta, salud/cobertura de almacenamiento y grafo nativo Vector sin aplicar la migración. El upgrade repite las comprobaciones, respalda y revierte ante fallo. Reinicia sólo el transporte del monitor al cambiar el grafo; no reinicia el servidor ni aplicaciones. Conserva fuente, token, buffers, data_dir y offsets.
+Revisar primero la salida del preflight: exige muestras reales de contadores I/O bajo restricciones estándar del colector y valida historial/schema de CloudLinux, costo de esa consulta, salud/cobertura de almacenamiento y grafo nativo Vector sin aplicar la migración. El upgrade repite las comprobaciones, respalda y revierte ante fallo. Reinicia sólo el transporte del monitor al cambiar el grafo; no reinicia el servidor ni aplicaciones. Conserva fuente, token, buffers, data_dir y offsets.
 
-La opción sólo acepta rc26 observer-v4 con sonda y grafo revisados. No usar para convertir pipelines heredados ni adoptar rc25 incompleto. Las rutas anteriores sin esta opción mantienen su alcance previo y **no activan** la política esencial. No usar una actualización genérica como sustituto de esta selección. No hay despliegues masivos automáticos.
+La opción sólo acepta rc26 observer-v4 o rc27 esencial, con sonda y grafo revisados. No usar para convertir pipelines heredados ni adoptar rc25 incompleto. Las rutas anteriores sin esta opción mantienen su alcance previo y **no activan** la política esencial. No usar una actualización genérica como sustituto de esta selección. No hay despliegues masivos automáticos.
 
 ## Diagnóstico de una cuenta
 
 ```bash
-bash /root/installer-rc27.sh diagnostic-enable --user example --minutes 30 --readers access lve
-bash /root/installer-rc27.sh diagnostic-status
-bash /root/installer-rc27.sh diagnostic-disable
+bash /root/installer-rc28.sh diagnostic-enable --user example --minutes 30 --readers access lve
+bash /root/installer-rc28.sh diagnostic-status
+bash /root/installer-rc28.sh diagnostic-disable
 ```
 
 Cuenta exacta, máximo 60 min, activación en el siguiente ciclo. Lectores: access, lve, processes y wordpress. El lector de accesos sólo abre dominios reconocidos de esa cuenta; procesos y LVE sólo exportan sus datos. El estado de diagnóstico es separado de los cursores de la operación anterior y se retira al vencer. No se habilita automáticamente a partir de una alerta.
@@ -58,12 +60,12 @@ WordPress sólo admite rutas y vencimientos previamente aprobados en el perfil y
 Comprobar recepción remota de host/colector/sonda, ausencia de series rutinarias retiradas una vez drenado el transporte, al menos dos ventanas históricas completas y vencimiento del diagnóstico. Comparar 24 h de CPU total por cgroup, memoria, eventos y muestras antes/después. No equiparar muestras o JSON local con bytes facturados.
 
 ```bash
-bash /root/installer-rc27.sh rollback
+bash /root/installer-rc28.sh rollback
 ```
 
 Restaura la última transacción, sin retroceder offsets. El estado de ventanas tiene IDs deterministas; una interrupción entre escribir spool y confirmar estado puede duplicar un log. Deduplicar por host, window_id y recurso al sumar; no afirmar exactly-once ni recuperación de ventanas perdidas.
 
-[Operación rc27](docs/ESSENTIAL-MONITORING.md) · [Dashboards](docs/DASHBOARDS.md) · [Historial](docs/RELEASE-NOTES.md) · [Seguridad](SECURITY.md)
+[Operación rc28](docs/ESSENTIAL-MONITORING.md) · [Dashboards](docs/DASHBOARDS.md) · [Historial](docs/RELEASE-NOTES.md) · [Seguridad](SECURITY.md)
 
 ## Desarrollo
 

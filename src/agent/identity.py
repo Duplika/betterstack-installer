@@ -3,6 +3,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -94,6 +95,56 @@ def atomic(path, obj):
         temporary.unlink(missing_ok=True)
 
 
+def observer_health(meta):
+    """Liveness and component health are independent observations."""
+    result = {'heartbeat': 'invalid', 'status': 'unavailable', 'degraded_components': []}
+    try:
+        if meta.get('resource_sampling'):
+            marker = json.loads(read(Path('/var/lib/duplika-betterstack-cloudlinux/private/collector-health.json')))
+            at = marker.get('at') if isinstance(marker, dict) else None
+            if (isinstance(at, bool) or not isinstance(at, (int, float)) or not math.isfinite(at)):
+                return result
+            if marker.get('boot_id') is not None:
+                boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+                if marker['boot_id'] != boot:
+                    return dict(result, heartbeat='previous_boot')
+            max_age = 180
+        else:
+            spool = Path('/var/lib/duplika-betterstack-cloudlinux/spool/events.jsonl')
+            with spool.open('rb') as stream:
+                stream.seek(max(0, spool.stat().st_size - 262144))
+                rows = stream.read(262144).splitlines()
+            marker = None
+            for row in reversed(rows):
+                try:
+                    value = json.loads(row)
+                except ValueError:
+                    continue
+                if isinstance(value, dict) and value.get('event_kind') == 'collector_heartbeat':
+                    marker = value
+                    break
+            if marker is None:
+                return dict(result, heartbeat='missing')
+            at = datetime.datetime.fromisoformat(marker['dt']).timestamp()
+            max_age = 900
+        components = marker.get('components')
+        if (not isinstance(components, dict) or not components or len(components) > 32
+                or any(not isinstance(k, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,63}', k) for k in components)):
+            return result
+        age = time.time() - at
+        if age < 0:
+            return result
+        if age >= max_age:
+            return dict(result, heartbeat='stale')
+        failed = sorted(k for k, v in components.items() if v == 'failed' or v is False)
+        return {'heartbeat': 'fresh', 'status': 'degraded' if failed else 'ok',
+                'degraded_components': failed}
+    except FileNotFoundError:
+        return dict(result, heartbeat='missing')
+    except (OSError, ValueError, RuntimeError, TypeError, KeyError):
+        return result
+
+
 def status(publish=False, quiet=False):
     meta = json.loads(read(BASE / 'manifest.json'))
     hashes = snapshot(meta['critical_paths'], meta['config_path'])
@@ -106,33 +157,18 @@ def status(publish=False, quiet=False):
     for name in meta.get('oneshots', []):
         p = health.run(['systemctl', 'show', name, '-p', 'Result', '--value'])
         services[name + ':last_result'] = p.returncode == 0 and p.stdout.strip() == 'success'
+    checks = {}
+    observer = None
     if meta['config_path'] == '/etc/duplika-betterstack-cloudlinux/vector.json':
-        if meta.get('resource_sampling'):
-            try:
-                heartbeat = json.loads(read(Path('/var/lib/duplika-betterstack-cloudlinux/private/collector-health.json')))
-                services['observer_heartbeat'] = (0 <= time.time() - heartbeat.get('at', 0) < 180
-                    and 'failed' not in heartbeat.get('components', {}).values())
-            except (OSError, ValueError, RuntimeError):
-                services['observer_heartbeat'] = False
-        else:
-            spool = Path('/var/lib/duplika-betterstack-cloudlinux/spool/events.jsonl')
-            try:
-                with spool.open('rb') as stream:
-                    stream.seek(max(0, spool.stat().st_size - 262144))
-                    rows = stream.read(262144).splitlines()
-                heartbeat = next(json.loads(row) for row in reversed(rows) if b'collector_heartbeat' in row and json.loads(row).get('event_kind') == 'collector_heartbeat')
-                event_time = datetime.datetime.fromisoformat(heartbeat['dt']).timestamp()
-                fresh = 0 <= time.time() - event_time < 900
-                services['observer_heartbeat'] = fresh and 'failed' not in heartbeat.get('components', {}).values()
-            except (OSError, ValueError, StopIteration):
-                services['observer_heartbeat'] = False
+        observer = observer_health(meta)
+        checks['observer_heartbeat:' + observer['heartbeat']] = observer['heartbeat'] == 'fresh'
     if meta.get('storage_observer'):
         try:
             storage = json.loads(read(Path('/var/lib/duplika-betterstack-cloudlinux/private/storage-health.json')))
-            services['storage_heartbeat'] = (0 <= time.time() - storage.get('at', 0) < 180
+            checks['storage_heartbeat'] = (0 <= time.time() - storage.get('at', 0) < 180
                                               and storage.get('probe_failures') == 0)
         except (OSError, ValueError, RuntimeError):
-            services['storage_heartbeat'] = False
+            checks['storage_heartbeat'] = False
     version = health.run([meta['vector_binary'], '--version'])
     vector_version = version.stdout.strip()[:160] if version.returncode == 0 else 'unknown'
     maintenance = health.observe()
@@ -147,8 +183,13 @@ def status(publish=False, quiet=False):
         'drift_detected': drift, 'version_status': 'drift' if drift else 'matches_reviewed_baseline',
         'services_healthy': all(services.values()),
         'inactive_services': [k for k, v in services.items() if not v],
+        'failed_health_checks': [k for k, v in checks.items() if not v],
         'maintenance': maintenance, 'metrics_delivery_verified': False,
         'release_channel': 'candidate', 'remote_acceptance': 'external_evidence_required'}
+    event['collector_healthy'] = (all(services.values()) and all(checks.values())
+                                  and (observer is None or observer['status'] == 'ok'))
+    if observer is not None:
+        event['observer_health'] = observer
     if meta.get('resource_sampling'):
         event['resource_sampling'] = meta['resource_sampling']
     old = json.loads(read(STATE / 'last-send.json')) if (STATE / 'last-send.json').exists() else {}
@@ -173,8 +214,14 @@ def status(publish=False, quiet=False):
         print('Identidad sin cambios; próximo envío ante cambios o inventario diario.')
     else:
         print(json.dumps(event, indent=2))
-    if drift or not all(services.values()):
-        raise RuntimeError('integrity_or_service_failure')
+    if drift:
+        raise RuntimeError('integrity_failure')
+    if not all(services.values()):
+        raise RuntimeError('service_failure')
+    if not all(checks.values()):
+        raise RuntimeError('health_check_failure')
+    if observer is not None and observer['status'] == 'degraded':
+        raise RuntimeError('collector_components_degraded')
     return event
 
 

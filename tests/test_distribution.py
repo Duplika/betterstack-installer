@@ -362,9 +362,15 @@ class IdentityDeliveryTests(unittest.TestCase):
         with patch.object(identity, 'read', side_effect=read):
             self.assertTrue(identity.status()['services_healthy'])
             marker['at'] = 999000
-            with self.assertRaisesRegex(RuntimeError, 'integrity_or_service_failure'): identity.status()
+            with self.assertRaisesRegex(RuntimeError, 'health_check_failure'): identity.status()
             marker['at'] = 999999; marker['components']['lve'] = 'failed'
-            with self.assertRaisesRegex(RuntimeError, 'integrity_or_service_failure'): identity.status()
+            with self.assertRaisesRegex(RuntimeError, 'collector_components_degraded'): identity.status(publish=True)
+            event = self.send.call_args.args[2]
+            self.assertTrue(event['services_healthy'])
+            self.assertEqual(event['inactive_services'], [])
+            self.assertEqual(event['failed_health_checks'], [])
+            self.assertFalse(event['collector_healthy'])
+            self.assertEqual(event['observer_health'], {'heartbeat': 'fresh', 'status': 'degraded', 'degraded_components': ['lve']})
 
 if __name__=='__main__':unittest.main()
 

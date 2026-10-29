@@ -1,6 +1,6 @@
-# Operación actual: candidata rc27
+# Operación actual: candidata rc28
 
-La nueva política requiere selección explícita desde rc26 completo. Ver [procedimiento esencial](ESSENTIAL-MONITORING.md) y [README](../README.md). Las siguientes secciones se conservan como historial de rutas y recuperación; no describen la frecuencia de la política esencial.
+La nueva política requiere selección explícita desde rc26 completo o rc27 esencial. Ver [procedimiento esencial](ESSENTIAL-MONITORING.md) y [README](../README.md). Las siguientes secciones se conservan como historial de rutas y recuperación; no describen la frecuencia de la política esencial.
 
 # Procedimiento actual rc19
 

@@ -9,7 +9,8 @@ WITH points AS (
       'duplika_access_coverage_complete','duplika_lve_sample_failed','duplika_lve_accounts_observed',
       'duplika_lve_sample_age_seconds','duplika_storage_probe_failures',
       'duplika_monitoring_policy_essential','duplika_monitoring_diagnostic_active',
-      'duplika_lve_history_sample_failed','duplika_lve_history_sample_age_seconds')
+      'duplika_lve_history_sample_failed','duplika_lve_history_sample_age_seconds',
+      'duplika_disk_io_sample_failed','duplika_disk_io_sample_age_seconds','duplika_disk_io_devices_observed')
     AND metrics_count > 0
   GROUP BY dt, host, name
 ), latest AS (
@@ -24,7 +25,10 @@ WITH points AS (
     if(countIf(name='duplika_storage_probe_failures')>0,argMaxIf(v,dt,name='duplika_storage_probe_failures'),NULL) AS storage_failed,
     if(countIf(name='duplika_lve_history_sample_failed')>0,argMaxIf(v,dt,name='duplika_lve_history_sample_failed'),NULL) AS history_failed,
     if(countIf(name='duplika_lve_history_sample_age_seconds')>0,argMaxIf(v,dt,name='duplika_lve_history_sample_age_seconds'),NULL) AS history_age,
-    if(countIf(name='duplika_monitoring_diagnostic_active')>0,argMaxIf(v,dt,name='duplika_monitoring_diagnostic_active'),NULL) AS diagnostic
+    if(countIf(name='duplika_monitoring_diagnostic_active')>0,argMaxIf(v,dt,name='duplika_monitoring_diagnostic_active'),NULL) AS diagnostic,
+    if(countIf(name='duplika_disk_io_sample_failed')>0,argMaxIf(v,dt,name='duplika_disk_io_sample_failed'),NULL) AS disk_io_failed,
+    if(countIf(name='duplika_disk_io_sample_age_seconds')>0,argMaxIf(v,dt,name='duplika_disk_io_sample_age_seconds'),NULL) AS disk_io_age,
+    if(countIf(name='duplika_disk_io_devices_observed')>0,argMaxIf(v,dt,name='duplika_disk_io_devices_observed'),NULL) AS disk_io_devices
   FROM points
   GROUP BY host
 ), expected AS (
@@ -48,7 +52,10 @@ SELECT
   if(l.essential=1,'Historial 15 min; detalle sólo en diagnóstico','Muestreo anterior') AS Modo_monitoreo,
   l.history_failed AS Fallo_consulta_historica,
   l.history_age AS Edad_consulta_historica_segundos,
-  l.diagnostic AS Diagnostico_temporal_activo
+  l.diagnostic AS Diagnostico_temporal_activo,
+  l.disk_io_failed AS Fallo_lectura_IO,
+  l.disk_io_age AS Edad_muestra_IO_segundos,
+  l.disk_io_devices AS Dispositivos_IO_observados
 FROM expected e
 LEFT JOIN latest l ON e.host=l.host
 ORDER BY Servidor

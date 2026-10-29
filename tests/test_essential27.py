@@ -202,7 +202,7 @@ class ExplicitMigrationTests(Rc26ProofTests):
             calls.append(args)
             if args==['systemctl','start','duplika-cloudlinux-observer.service']:
                 (i.CLOUD_DATA/'private/collector-health.json').write_text(json.dumps({'at':time.time(),'started_at':time.time(),
-                    'agent_version':i.VERSION,'monitoring_policy':'essential-v1','components':{'processes':'disabled','access':'disabled','lve':'available'}}))
+                    'agent_version':i.VERSION,'monitoring_policy':'essential-v1','components':{'processes':'disabled','access':'disabled','lve':'available','disk_io':'available'}}))
         with patch.object(e,'plan',return_value=(self.meta,{'agent_version':'4.0.0-rc26'},proposed,{})), \
              patch.object(i,'execute',side_effect=execute),patch.object(i,'observer_quiet_point',side_effect=contextlib.nullcontext), \
              patch.object(i,'wait_observer_inactive'),patch.object(i,'backup',return_value={}),patch.object(i,'activate') as activate:

@@ -37,7 +37,7 @@ def main():
     check_reader_aggregation(args.vector, aggregation)
     check_event_time_bound(args.vector, aggregation)
     essential = observer_config.make_config({'host': 'cloud.example.net', 'server_ip': '203.0.113.20',
-        'monitoring_policy': 'essential-v1'}, 'TEST_SECRET', 's1234568.us-west-2a.betterstackdata.com')
+        'monitoring_policy': 'essential-v1', 'disk_io_observer': True}, 'TEST_SECRET', 's1234568.us-west-2a.betterstackdata.com')
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / 'essential.json'; path.write_text(json.dumps(essential))
         subprocess.run([args.vector, 'test', '--config-json', str(path)], check=True, timeout=120)

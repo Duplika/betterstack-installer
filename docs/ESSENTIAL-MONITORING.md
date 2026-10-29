@@ -1,12 +1,12 @@
-# Operación de la candidata rc27
+# Operación de la candidata rc28
 
 ## Alcance
 
-Sólo la selección explícita `--essential-monitoring` sobre observer-v4 rc26 completo con sonda activa cambia la política. Las rutas heredadas permanecen fuera de esta migración. No se cambia retención, fuente, credencial, aplicaciones, paquetes, límites LVE/Governor, firewall o sistema operativo.
+Sólo la selección explícita `--essential-monitoring` sobre observer-v4 rc26 completo o rc27 esencial con sonda activa cambia la política. Las rutas heredadas permanecen fuera de esta migración. No se cambia retención, fuente, credencial, aplicaciones, paquetes, límites LVE/Governor, firewall o sistema operativo.
 
-Preflight valida baseline/runtime oficial rc26, perfil/versiones, grafo original de Vector, señal de sonda reciente y volúmenes reales bajo el mismo sandbox de la sonda. Requiere un inventario no vacío y capacidad disponible/sólo lectura para todos los volúmenes reportados. No es inventario de montajes de red o discos sin montar. Ejecuta cloudlinux-statistics cuando LVE es aplicable y prueba el nuevo grafo con el Vector instalado. Publica sólo cantidades y costo de la consulta, sin nombres de clientes ni salida cruda.
+Preflight valida baseline/runtime oficial rc26/rc27, perfil/versiones, grafo original de Vector, señal de sonda reciente y volúmenes reales bajo el mismo sandbox de la sonda. Requiere un inventario no vacío y capacidad disponible/sólo lectura para todos los volúmenes reportados. No es inventario de montajes de red o discos sin montar. Ejecuta cloudlinux-statistics cuando LVE es aplicable y prueba el nuevo grafo con el Vector instalado. Publica sólo cantidades y costo de la consulta, sin nombres de clientes ni salida cruda.
 
-El upgrade repite esas comprobaciones, respalda código/perfil/configuración/manifiesto y estados de los servicios afectados, pausa timers, espera el lock y verifica nuevamente el baseline. Conserva los buffers y cursores. El transporte se detiene brevemente al reemplazar el grafo y se valida como duplikaobs antes de arrancarlo. La sonda no se reemplaza. Se exige un ciclo del código nuevo con marcador essential-v1 antes de terminar la transacción. Ante fallo se restaura la última transacción sin retroceder cursores.
+El upgrade repite esas comprobaciones, respalda código/perfil/configuración/manifiesto y estados de los servicios afectados, pausa timers, espera el lock y verifica nuevamente el baseline. Conserva los buffers y cursores. El transporte se detiene brevemente al reemplazar el grafo y se valida como duplikaobs antes de arrancarlo. La sonda no se reemplaza. Se exige un ciclo del código nuevo con marcador essential-v1 e I/O disponible antes de terminar la transacción. Ante fallo se restaura la última transacción sin retroceder cursores.
 
 ## Historial de presión
 
@@ -57,3 +57,14 @@ Las métricas CPU/RSS del colector no representan simultáneamente todo el monit
 7. Revisar antes de ampliar por lotes. Los dashboards distinguen política esencial del muestreo anterior; ausencia deliberada de accesos/LVE por cuenta no es un fallo.
 
 Si el preflight falla o una consulta resulta demasiado costosa bajo la cuota instalada, conservar rc26 y revisar la evidencia. No editar perfiles, hashes o baseline para forzar aceptación. No se recertifica un grafo desconocido.
+
+
+## I/O y salud rc28
+
+El colector root existente lee /proc/diskstats cada 300 s y escribe cuatro contadores por dispositivo en el spool que consume el único transporte. Conserva disk_read_bytes_total, disk_reads_completed_total, disk_written_bytes_total y disk_writes_completed_total, con tag device. Los sectores del kernel se convierten usando 512 bytes. Los contadores por dispositivo y por capas MD/particiones no deben sumarse indiscriminadamente. La gráfica esencial de Vector conserva red cada 300 s y retira su lector disk; no se cambia el usuario duplikaobs, capacidades ni protecciones de CloudLinux. Las referencias son [Vector 0.60](https://github.com/vectordotdev/vector/blob/v0.60.0/src/sources/host_metrics/disk.rs) y [estadísticas del kernel](https://docs.kernel.org/admin-guide/iostats.html).
+
+El preflight ejecuta el parser distribuido bajo restricciones estándar del colector y exige al menos un dispositivo y cuatro muestras por dispositivo. No modifica archivos persistentes. El upgrade exige además un primer ciclo real de la unidad instalada con I/O disponible; revierte si falla. Las métricas duplika_disk_io_sample_failed, duplika_disk_io_sample_age_seconds, duplika_disk_io_sample_interval_seconds y duplika_disk_io_devices_observed informan cobertura. Un fallo de lectura incrementa duplika_collector_failed_components, conserva heartbeat y no reenvía contadores antiguos ni inventa ceros. Tras cambiar boot_id se vuelve a medir inmediatamente. Confirmar recepción real de las cuatro series por dispositivo y dos muestras separadas aproximadamente 300 s antes de aceptar; el preflight no certifica entrega remota.
+
+La identidad distingue observer_health.heartbeat (fresh, missing, stale, invalid, previous_boot) de observer_health.status (ok, degraded, unavailable). services_healthy e inactive_services describen las unidades; collector_healthy incluye heartbeat y componentes. Un fallo LVE con heartbeat fresco no inventa una unidad inactiva: permanece visible como degraded_components y error collector_components_degraded. stdout, marcador local, logs heartbeat y contador de componentes fallidos usan el mismo criterio. El colector termina su ciclo con código cero si pudo persistir los datos sanos, aunque su status sea degraded; la verificación de identidad conserva error explícito.
+
+Los errores de comandos registran herramienta permitida, reason, timeout_seconds y, cuando existen, exit_code, errno y stderr_category. No se exportan argumentos, stdout, stderr ni textos arbitrarios de excepciones. La categoría sólo clasifica permisos, dependencias, filesystem de sólo lectura y base ocupada; un error no reconocido sigue como unclassified. No se atribuyen causas pasadas que el código anterior no conservó.
