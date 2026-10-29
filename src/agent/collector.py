@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc21'
+COLLECTOR_RELEASE = '4.0.0-rc28'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -89,7 +89,7 @@ def sampled_component(out, state, name, function, now):
             entry['succeeded_at'] = now
         except Exception as error:
             entry['result'] = 'failed'
-            out.log('collector_error', component=name, error_class=type(error).__name__, level='warning')
+            out.log('collector_error', component=name, **error_diagnostic(error), level='warning')
     successful = entry.get('succeeded_at')
     if successful is not None and now >= successful:
         out.metric('duplika_' + name + '_sample_age_seconds', now - successful)
@@ -125,15 +125,123 @@ def read_json(path, default):
         return default
 
 
-def command(args, timeout=8):
+class CommandFailure(RuntimeError):
+    """Only fixed classifications and numeric codes may leave the command boundary."""
+    def __init__(self, reason, tool, timeout, exit_code=None, errno=None, stderr_category=None):
+        super().__init__(reason)
+        self.diagnostic = {'reason': reason, 'tool': tool, 'timeout_seconds': timeout}
+        for name, value in (('exit_code', exit_code), ('errno', errno), ('stderr_category', stderr_category)):
+            if value is not None:
+                self.diagnostic[name] = value
+
+
+def error_diagnostic(error):
+    fields = {'error_class': type(error).__name__}
+    if isinstance(error, CommandFailure):
+        fields.update(error.diagnostic)
+    elif isinstance(error, json.JSONDecodeError):
+        fields['reason'] = 'invalid_json'
+    elif isinstance(error, OSError):
+        fields['reason'] = 'os_error'
+        if error.errno is not None:
+            fields['errno'] = error.errno
+    # Arbitrary exception text may contain account data, SQL, URLs or credentials.
+    elif str(error) in ('cloudlinux_top_invalid_response', 'diskstats_invalid',
+                         'diskstats_empty', 'diskstats_limit', 'pressure:invalid_response',
+                         'pressure:tool_unavailable', 'pressure:unsafe_executable',
+                         'pressure:missing_faults', 'pressure:unsupported_fault_schema',
+                         'pressure:invalid_fault_schema', 'pressure:invalid_fault_count',
+                         'pressure:invalid_resource_schema', 'pressure:account_identity_unavailable',
+                         'pressure:duplicate_account', 'pressure:result_limit'):
+        fields['reason'] = str(error)
+    else:
+        fields['reason'] = 'internal_error'
+    return fields
+
+
+def command(args, timeout=8, utc=False):
     # No shell, fixed root-owned executables, stdout never included in failure events.
-    result = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
-                            env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
+    environment = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}
+    if utc:
+        environment['TZ'] = 'UTC'
+    tool = Path(args[0]).name
+    # These are fixed internal commands, never user-selected executables.
+    tool = tool if tool in ('cloudlinux-top', 'cloudlinux-statistics', 'journalctl') else 'other'
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, env=environment)
+    except subprocess.TimeoutExpired:
+        raise CommandFailure('timeout', tool, timeout) from None
+    except OSError as error:
+        raise CommandFailure('execution_failed', tool, timeout, errno=error.errno) from None
     if result.returncode:
-        raise RuntimeError('command_failed')
+        category = 'unclassified' if result.stderr.strip() else 'empty'
+        for pattern, name in ((r'(?i)(permission denied|operation not permitted)', 'permission_denied'),
+                              (r'(?i)(ModuleNotFoundError|ImportError)', 'dependency_missing'),
+                              (r'(?i)(read.only file system)', 'readonly_filesystem'),
+                              (r'(?i)(database is locked|database.*busy)', 'database_busy')):
+            if re.search(pattern, result.stderr):
+                category = name
+                break
+        raise CommandFailure('command_failed', tool, timeout, exit_code=result.returncode,
+                             stderr_category=category)
     if len(result.stdout) > 8 * 1024 * 1024:
-        raise RuntimeError('command_output_too_large')
+        raise CommandFailure('command_output_too_large', tool, timeout)
     return result.stdout
+
+
+def read_diskstats(path=Path('/proc/diskstats')):
+    """Linux sectors are 512 bytes regardless of physical/logical sector size.
+
+    Preserve Vector 0.60 disk counter names and device labels. Layered MD/device
+    counters must be viewed per device, never summed as physical disk traffic.
+    """
+    with path.open() as stream:
+        text = stream.read(1024 * 1024 + 1)
+    if len(text) > 1024 * 1024:
+        raise RuntimeError('diskstats_limit')
+    rows = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 14 or not re.fullmatch(r'[A-Za-z0-9_.!+-]{1,128}', fields[2]):
+            raise RuntimeError('diskstats_invalid')
+        if not all(value.isascii() and value.isdigit() for value in fields[:2] + fields[3:14]):
+            raise RuntimeError('diskstats_invalid')
+        device = fields[2]
+        if device in rows or len(rows) >= 4096:
+            raise RuntimeError('diskstats_limit')
+        rows[device] = {'disk_read_bytes_total': int(fields[5]) * 512,
+                        'disk_reads_completed_total': int(fields[3]),
+                        'disk_written_bytes_total': int(fields[9]) * 512,
+                        'disk_writes_completed_total': int(fields[7])}
+    if not rows:
+        raise RuntimeError('diskstats_empty')
+    return rows
+
+
+def collect_disk_io(out, state, now, boot_id, generation=None):
+    entry = state.setdefault('disk_io_v28', {})
+    if entry.get('boot_id') != boot_id or entry.get('generation') != generation:
+        entry.clear()
+        entry['boot_id'] = boot_id
+        entry['generation'] = generation
+    attempted = entry.get('attempted_at')
+    if attempted is None or now < attempted or now - attempted >= 300:
+        entry['attempted_at'] = now
+        try:
+            rows = read_diskstats()
+            for device, counters in rows.items():
+                for name, value in counters.items():
+                    out.counter(name, value, device=device)
+            entry.update(succeeded_at=now, failed=False, devices=len(rows))
+        except Exception as error:
+            entry.update(failed=True)
+            out.log('collector_error', component='disk_io', **error_diagnostic(error), level='warning')
+    if 'succeeded_at' in entry and now >= entry['succeeded_at']:
+        out.metric('duplika_disk_io_sample_age_seconds', now - entry['succeeded_at'])
+    out.metric('duplika_disk_io_sample_interval_seconds', 300)
+    out.metric('duplika_disk_io_sample_failed', int(entry.get('failed', True)))
+    out.metric('duplika_disk_io_devices_observed', entry.get('devices', 0))
+    return 'failed' if entry.get('failed', True) else 'available'
 
 
 def inventory():
@@ -277,7 +385,7 @@ class Output:
             else:
                 keys = {'access_log_coverage': ('coverage_complete',),
                         'collector_unavailable': ('component', 'path'),
-                        'collector_error': ('component', 'error_class')}[kind]
+                        'collector_error': ('component', 'error_class', 'reason', 'exit_code', 'stderr_category', 'errno')}[kind]
                 signature = {key: fields.get(key) for key in keys}
                 interval = INCIDENT_REMINDER_SECONDS if kind != 'access_log_coverage' or not fields.get('coverage_complete') else 86400
             key = kind + ':' + str(fields.get('component', '')) + ':' + str(fields.get('path', ''))
@@ -306,6 +414,11 @@ class Output:
                              'tags': dict(host=self.profile['host'], server_ip=self.profile['server_ip'],
                                           **{k: str(v) for k, v in labels.items()})})
 
+    def counter(self, name, value, **labels):
+        self.metrics.append({'dt': self.at, 'name': name, 'counter': {'value': value},
+                             'tags': dict(host=self.profile['host'], server_ip=self.profile['server_ip'],
+                                          **{k: str(v) for k, v in labels.items()})})
+
     def flush(self):
         # Bounded local retention: current + 2 rotated files, 16 MiB each, per stream.
         for filename, rows in [('events.jsonl', self.logs), ('metrics.jsonl', self.metrics)]:
@@ -327,13 +440,15 @@ class Output:
                     stream.write(json.dumps(row, separators=(',', ':')) + '\n')
 
 
-def collect_processes(out, state, domains, accounts, users):
+def collect_processes(out, state, domains, accounts, users, selected_users=None):
     current, hz = proc_snapshot()
     uptime = float(Path('/proc/uptime').read_text().split()[0])
     old_uptime = state.get('proc_uptime')
     elapsed = uptime - old_uptime if old_uptime is not None else 0
     previous = state.get('proc', {}) if 0 < elapsed < 600 else {}
     rows = process_deltas(current, previous, elapsed, hz, old_uptime if previous else None)
+    if selected_users is not None:
+        rows = [row for row in rows if users.get(row['uid']) in selected_users]
     grouped = collections.defaultdict(lambda: {'cpu_percent': 0, 'cpu_observed': False,
         'rss_bytes': 0, 'process_count': 0, 'blocked_processes': 0, 'running_processes': 0,
         'read_bytes_per_second': 0, 'write_bytes_per_second': 0, 'io_observed': False})
@@ -388,21 +503,25 @@ def lve_values(record, section):
     return {k: v for k, v in result.items() if v is not None}
 
 
-def collect_lve(out, profile):
+def collect_lve(out, profile, selected_users=None):
     if profile.get("capabilities", {}).get("lve_status") in ("not_supported", "not_applicable"):
         return "not_supported"
     command_path = profile.get('cloudlinux_top')
     if not command_path:
         out.log('collector_unavailable', component='cloudlinux_top', level='warning')
-        return False
+        raise CommandFailure('tool_unavailable', 'cloudlinux-top', 40)
     args = [command_path, '--json', '--order-by=cpu', '--max=10000']
     if profile.get('isolates_supported'):
         args.append('--domains')
     data = json.loads(command(args, timeout=40))
-    if data.get('result') != 'success' or not isinstance(data.get('users'), list):
+    if not isinstance(data, dict) or data.get('result') != 'success' or not isinstance(data.get('users'), list):
         raise RuntimeError('cloudlinux_top_invalid_response')
+    observed_accounts = 0
     for record in data['users']:
         user = str(record.get('username') or record.get('id'))[:64]
+        if selected_users is not None and user not in selected_users:
+            continue
+        observed_accounts += 1
         usage, limits = lve_values(record, 'usage'), lve_values(record, 'limit')
         mysql = {}
         if data.get('mySqlGov') == 'enabled':
@@ -426,7 +545,7 @@ def collect_lve(out, profile):
                         limits=lve_values(domain, 'limit'))
                 for key, value in usage.items():
                     out.metric('duplika_isolated_domain_' + key, value, user=user, site=site)
-    out.metric('duplika_lve_accounts_observed', len(data['users']))
+    out.metric('duplika_lve_accounts_observed', observed_accounts)
     return True
 
 
@@ -491,6 +610,20 @@ def read_tail(path, previous, allowance):
             'rotated': rotated, 'bytes_read': len(data), 'skipped_bytes': skipped}
 
 
+def access_allowances(demands, budget):
+    """Max-min allocation: satisfy small tails before dividing scarce bytes."""
+    result = [0] * len(demands)
+    active = sorted((min(MAX_FILE_BYTES, max(0, need)), index)
+                    for index, need in enumerate(demands) if need > 0)
+    remaining = len(active)
+    for need, index in active:
+        grant = min(need, max(0, budget) // remaining)
+        result[index] = grant
+        budget -= grant
+        remaining -= 1
+    return result
+
+
 def collect_access(out, state, domains, profile):
     old = state.get('access_files', {})
     new, seen, coverage = {}, set(), collections.Counter()
@@ -516,9 +649,10 @@ def collect_access(out, state, domains, profile):
                     continue
                 seen.add(key)
                 previous = old.get(str(path))
-                backlog = previous is not None and (
-                    previous.get('inode') != list(key) or previous['offset'] != info.st_size)
-                candidates.append((path, site, backlog))
+                offset = info.st_size if previous is None else previous['offset']
+                if previous is not None and (previous.get('inode') != list(key) or offset > info.st_size):
+                    offset = 0
+                candidates.append((path, site, max(0, info.st_size - offset)))
             except (OSError, ValueError, RuntimeError):
                 coverage['unreadable_files'] += 1
     # Rotation makes rounding and unused budget favor a different file each cycle.
@@ -526,15 +660,23 @@ def collect_access(out, state, domains, profile):
         start = state.get('access_round_robin', 0) % len(candidates)
         candidates = candidates[start:] + candidates[:start]
         state['access_round_robin'] = (start + 1) % len(candidates)
-    remaining = sum(backlog for _, _, backlog in candidates)
-    for path, site, backlog in candidates:
+    demands = [need for _, _, need in candidates]
+    allowances = access_allowances(demands, budget)
+    reserved = sum(allowances)
+    remaining = sum(need > 0 for need in demands)
+    for index, (path, site, backlog) in enumerate(candidates):
+        planned = allowances[index]
+        # Unused capacity is available immediately. Growth after discovery may
+        # share reserved bytes too, without starving the known remaining tails.
+        free = max(0, budget - reserved)
+        if backlog:
+            share = planned * min(budget, reserved) // max(1, reserved)
+            remaining -= 1
+        else:
+            share = min(budget, reserved) // max(1, remaining + 1)
+        allowance = min(MAX_FILE_BYTES, free + share)
+        reserved -= planned
         try:
-            # A file classified as idle can grow before open/fstat. Reserve a
-            # share for that race instead of skipping its new bytes with zero.
-            shares = max(1, remaining + (not backlog))
-            allowance = min(MAX_FILE_BYTES, budget // shares)
-            if backlog:
-                remaining -= 1
             lines, position, quality = read_tail(path, old.get(str(path)), allowance)
             new[str(path)] = position
             budget -= quality['bytes_read']
@@ -575,6 +717,8 @@ def collect_access(out, state, domains, profile):
                        site=site, user=domains[site])
     out.log('access_log_coverage', coverage_complete=complete, **dict(coverage))
     out.metric('duplika_access_skipped_bytes', coverage['skipped_bytes'])
+    out.metric('duplika_access_read_bytes', coverage['bytes_read'])
+    out.metric('duplika_access_max_file_backlog_bytes', max(demands, default=0))
     out.metric('duplika_access_parse_failures', coverage['unparsed_lines'])
     out.metric('duplika_access_coverage_complete', int(complete))
     state['access_files'], state['access_at'] = new, time.time()
@@ -671,64 +815,284 @@ def collect_wordpress(out, state, profile):
                         counts=dict(counts), coverage=quality, level='warning' if counts else 'info')
     return 'enabled' if profile.get('wordpress') else 'disabled'
 
+PRESSURE_INTERVAL = 900
+PRESSURE_THRESHOLD = 10
+PRESSURE_RESOURCES = ('cpu', 'pmem', 'io', 'iops', 'ep', 'nproc')
+ESSENTIAL_POLICY = 'essential-v1'
+
+
+def pressure_window(now):
+    # Closed UTC windows, with one minute for the local statistics writer.
+    end = (int(now) - 60) // PRESSURE_INTERVAL * PRESSURE_INTERVAL
+    return end - PRESSURE_INTERVAL, end
+
+
+def pressure_rows(data):
+    """Reject ambiguous schemas; never classify a failed query as no pressure."""
+    if not isinstance(data, dict) or data.get('result') != 'success' or not isinstance(data.get('users'), list):
+        raise RuntimeError('pressure:invalid_response')
+    if len(data['users']) > 50000:
+        raise RuntimeError('pressure:result_limit')
+    result, seen = [], set()
+    for row in data['users']:
+        if not isinstance(row, dict) or not isinstance(row.get('faults'), dict):
+            raise RuntimeError('pressure:missing_faults')
+        if not set(row['faults']) & set(PRESSURE_RESOURCES + ('vmem',)):
+            raise RuntimeError('pressure:unsupported_fault_schema')
+        affected = {}
+        for resource in PRESSURE_RESOURCES:
+            section = row['faults'].get(resource)
+            if section is None:
+                continue  # Not supported/exposed is not zero faults.
+            if not isinstance(section, dict) or 'lve' not in section:
+                raise RuntimeError('pressure:invalid_fault_schema')
+            faults = section['lve']
+            if isinstance(faults, bool) or not isinstance(faults, (int, float)) or not math.isfinite(faults) or faults < 0 or int(faults) != faults:
+                raise RuntimeError('pressure:invalid_fault_count')
+            if faults <= PRESSURE_THRESHOLD:
+                continue
+            detail = {'faults': int(faults)}
+            for source, dest in (('usage', 'usage_average'), ('limits', 'limit')):
+                value = (row.get(source) or {}).get(resource, {})
+                if not isinstance(value, dict):
+                    raise RuntimeError('pressure:invalid_resource_schema')
+                observed = number(value.get('lve'))
+                if observed is not None:
+                    detail[dest] = observed
+            affected[resource] = detail
+        if affected:
+            user = row.get('username')
+            if not isinstance(user, str) or not USER.fullmatch(user):
+                raise RuntimeError('pressure:account_identity_unavailable')
+            if user in seen:
+                raise RuntimeError('pressure:duplicate_account')
+            seen.add(user)
+            mysql = {}
+            for resource in ('cpu', 'io'):
+                value = number(((row.get('usage') or {}).get(resource) or {}).get('mysql'))
+                if value is not None:
+                    mysql[resource + '_average'] = value
+            result.append({'user': user, 'resources': affected, 'mysql': mysql})
+    return result
+
+
+def query_pressure(profile, now):
+    if profile.get('capabilities', {}).get('lve_status') in ('not_supported', 'not_applicable'):
+        return None
+    tool = shutil.which('cloudlinux-statistics', path='/usr/sbin:/usr/bin:/sbin:/bin')
+    if not tool:
+        raise RuntimeError('pressure:tool_unavailable')
+    resolved = Path(tool).resolve()
+    for item in (Path(tool), resolved, *resolved.parents):
+        info = item.stat()
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            raise RuntimeError('pressure:unsafe_executable')
+    start, end = pressure_window(now)
+    stamp = lambda value: dt.datetime.fromtimestamp(value, dt.timezone.utc).strftime('%Y-%m-%d %H:%M')
+    args = [tool, '--json', '--from', stamp(start), '--to', stamp(end),
+            '--by-fault=any', '--threshold=10', '--limit=0']
+    rows = pressure_rows(json.loads(command(args, timeout=40, utc=True)))
+    return start, end, rows
+
+
+def collect_pressure(out, state, profile, now):
+    entry = state.setdefault('pressure_v27', {})
+    _, end = pressure_window(now)
+    if entry.get('window_end', 0) > end:
+        # A clock rollback is not permission to replay already processed windows.
+        out.metric('duplika_lve_history_clock_rollback', 1)
+    elif end != entry.get('window_end') and now - entry.get('attempt_at', 0) >= 300:
+        entry['attempt_at'] = now
+        try:
+            result = query_pressure(profile, now)
+            if result is None:
+                entry.update(window_end=end, succeeded_at=now, failed=False, status='not_supported')
+            else:
+                start, finish, rows = result
+                previous = entry.get('window_end')
+                if previous is not None and start > previous:
+                    out.log('account_resource_history_gap', missing_seconds=start - previous, level='warning')
+                for row in rows:
+                    out.log('account_resource_faults', user=row['user'], resources=row['resources'],
+                            mysql=row['mysql'], window_start=start, window_end=finish,
+                            window_id=str(start) + ':' + row['user'], threshold=PRESSURE_THRESHOLD,
+                            measurement='cloudlinux_history', level='warning')
+                out.metric('duplika_lve_history_accounts_affected', len(rows))
+                entry.update(window_end=finish, succeeded_at=now, failed=False, status='available')
+        except Exception as error:
+            entry.update(failed=True, status='failed')
+            # Do not include external command output, SQL, or arbitrary exception text.
+            out.log('collector_error', component='lve_history', **error_diagnostic(error), level='warning')
+    if 'succeeded_at' in entry and now >= entry['succeeded_at']:
+        out.metric('duplika_lve_history_sample_age_seconds', now - entry['succeeded_at'])
+    out.metric('duplika_lve_history_sample_interval_seconds', PRESSURE_INTERVAL)
+    out.metric('duplika_lve_history_sample_failed', int(entry.get('failed', True)))
+    return 'failed' if entry.get('failed', True) else entry.get('status', 'unknown')
+
+
+def essential_inventory(state):
+    paths = (Path('/etc/userdomains'), Path('/etc/passwd'))
+    fingerprint = [[p.stat().st_dev, p.stat().st_ino, p.stat().st_size, p.stat().st_mtime_ns] for p in paths]
+    cached = state.get('inventory_v27')
+    if cached is None or cached.get('fingerprint') != fingerprint:
+        domains, accounts, users = inventory()
+        # Never persist passwd records, only the uid/name mapping needed by diagnostics.
+        cached = {'fingerprint': fingerprint, 'domains': domains, 'accounts': sorted(accounts),
+                  'users': {str(k): v for k, v in users.items()}}
+        state['inventory_v27'] = cached
+    return cached['domains'], set(cached['accounts']), {int(k): v for k, v in cached['users'].items()}
+
+
+def active_diagnostic(now, accounts):
+    path = STATE / 'diagnostic.json'
+    if not path.exists():
+        return None
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+        raise RuntimeError('diagnostic:unsafe_selection')
+    item = json.loads(path.read_text())
+    if not isinstance(item, dict) or any(isinstance(item.get(key), bool) or not isinstance(item.get(key), (int, float)) or not math.isfinite(item[key]) for key in ('expires_at', 'created_at')):
+        raise RuntimeError('diagnostic:invalid_selection')
+    if item['expires_at'] <= now:
+        return None
+    if not 0 <= now - item.get('created_at', 0) < 3600 or item['expires_at'] - item['created_at'] > 3600:
+        raise RuntimeError('diagnostic:invalid_lifetime')
+    if item.get('user') not in accounts or not isinstance(item.get('readers'), list) or not set(item['readers']) <= {'access', 'processes', 'lve', 'wordpress'}:
+        raise RuntimeError('diagnostic:invalid_scope')
+    return item
+
+
+def main_essential(profile, state, out, started):
+    now = time.time()
+    domains, accounts, users = essential_inventory(state)
+    components = {'processes': 'disabled', 'access': 'disabled', 'wordpress': 'disabled'}
+    if profile.get('disk_io_observer'):
+        components['disk_io'] = collect_disk_io(out, state, now, state['boot_id'], profile.get('disk_io_generation'))
+    components['lve'] = collect_pressure(out, state, profile, now)
+    for name, function in (('errors', lambda: collect_errors(out, state, domains, profile)),
+                           ('kernel', lambda: collect_kernel(out, state))):
+        try:
+            components[name] = function()
+        except Exception as error:
+            components[name] = 'failed'
+            out.log('collector_error', component=name, **error_diagnostic(error), level='warning')
+    diagnostic = None
+    try:
+        diagnostic = active_diagnostic(now, accounts)
+        if diagnostic:
+            selected = {k: v for k, v in domains.items() if v == diagnostic['user']}
+            scope = state.setdefault('diagnostic_v27', {})
+            if scope.get('selection_at') != diagnostic['created_at']:
+                scope = {'selection_at': diagnostic['created_at']}
+                state['diagnostic_v27'] = scope
+            if 'access' in diagnostic['readers']:
+                components['access'] = collect_access(out, scope, selected, profile)
+            if 'processes' in diagnostic['readers']:
+                components['processes'] = collect_processes(out, scope, selected, {diagnostic['user']}, users, {diagnostic['user']})
+            if 'lve' in diagnostic['readers']:
+                components['diagnostic_lve'] = collect_lve(out, profile, {diagnostic['user']})
+            if 'wordpress' in diagnostic['readers']:
+                scoped_profile = dict(profile, wordpress=[site for site in profile.get('wordpress', [])
+                    if site['user'] == diagnostic['user'] and site['domain'] in selected])
+                components['wordpress'] = collect_wordpress(out, scope, scoped_profile)
+        else:
+            state.pop('diagnostic_v27', None)
+    except Exception as error:
+        components['diagnostic'] = 'failed'
+        out.log('collector_error', component='diagnostic', **error_diagnostic(error), level='warning')
+    if not 0 <= now - state.get('inventory_sent_at_v27', 0) < 43200:
+        out.metric('duplika_cpanel_accounts', len(accounts))
+        out.metric('duplika_cpanel_domains', len(domains))
+        state['inventory_sent_at_v27'] = now
+    import resource
+    usage, children = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
+    duration = time.monotonic() - started
+    out.metric('duplika_collector_cpu_with_children_seconds', usage.ru_utime + usage.ru_stime + children.ru_utime + children.ru_stime)
+    out.metric('duplika_collector_peak_rss_bytes', usage.ru_maxrss * 1024)
+    out.metric('duplika_collector_duration_seconds', duration)
+    out.metric('duplika_collector_heartbeat', 1)
+    failed = [name for name, value in components.items() if value == 'failed' or value is False]
+    status = 'degraded' if failed else 'ok'
+    out.metric('duplika_collector_failed_components', len(failed))
+    out.metric('duplika_monitoring_policy_essential', 1)
+    out.metric('duplika_monitoring_diagnostic_active', int(bool(diagnostic)))
+    out.log('collector_heartbeat', status=status, accounts=len(accounts), domains=len(domains), components=components)
+    out.flush()
+    atomic_json(STATE / 'collector-health.json', {'at': time.time(), 'started_at': now,
+        'agent_version': COLLECTOR_RELEASE, 'monitoring_policy': ESSENTIAL_POLICY, 'components': components,
+        'status': status, 'boot_id': state['boot_id']})
+    atomic_json(STATE / 'state.json', state)
+    print(json.dumps({'status': status, 'policy': ESSENTIAL_POLICY, 'components': components,
+                      'logs': len(out.logs), 'metrics': len(out.metrics)}))
+
+
 def main():
     if os.geteuid() != 0:
         raise RuntimeError('collector_requires_root')
     profile = read_json(BASE / 'profile.json', {})
-    lock = open(STATE / 'collector.lock', 'a')
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    state = read_json(STATE / 'state.json', {})
-    boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
-    if state.get('boot_id') != boot:
-        state.pop('resource_samples_v16', None)
-        state.pop('proc', None)
-        state.pop('proc_uptime', None)
-        state.pop('log_policy_v2', None)
-    state['boot_id'] = boot
-    for obsolete in ('traffic_pending_v4', 'event_policy_v4', 'log_policy_v2'):
-        state.pop(obsolete, None)
-    out = Output(profile, state)
-    started = time.monotonic()
-    domains, accounts, users = inventory()
-    components = {}
-    started_wall = time.time()
-    for name, fn in [
-        ('processes', lambda: sampled_component(out, state, 'processes',
-            lambda: collect_processes(out, state, domains, accounts, users), started_wall)),
-        ('lve', lambda: sampled_component(out, state, 'lve',
-            lambda: collect_lve(out, profile), started_wall)),
-        ('access', lambda: collect_access(out, state, domains, profile)),
-        ('errors', lambda: collect_errors(out, state, domains, profile)),
-        ('kernel', lambda: collect_kernel(out, state)),
-        ('wordpress', lambda: collect_wordpress(out, state, profile))]:
-        try:
-            components[name] = fn()
-        except Exception as error:
-            components[name] = 'failed'
-            out.log('collector_error', component=name, error_class=type(error).__name__, level='warning')
-    duration = time.monotonic() - started
-    import resource
-    usage = resource.getrusage(resource.RUSAGE_SELF)
-    children = resource.getrusage(resource.RUSAGE_CHILDREN)
-    out.metric('duplika_collector_cpu_seconds', usage.ru_utime + usage.ru_stime)
-    out.metric('duplika_collector_peak_rss_bytes', usage.ru_maxrss * 1024)
-    out.metric('duplika_collector_cpu_with_children_seconds',
-               usage.ru_utime + usage.ru_stime + children.ru_utime + children.ru_stime)
-    # Largest child RSS, not simultaneous total memory. Cgroup accounting measures the unit.
-    out.metric('duplika_collector_children_peak_rss_bytes', children.ru_maxrss * 1024)
-    out.metric('duplika_cpanel_accounts', len(accounts))
-    out.metric('duplika_cpanel_domains', len(domains))
-    out.log('collector_heartbeat', duration_seconds=round(duration, 3), accounts=len(accounts),
-            domains=len(domains), components=components, installation_id=profile['installation_id'],
-            suppressed_summary_logs=dict(out.suppressed))
-    out.metric('duplika_collector_duration_seconds', duration)
-    out.metric('duplika_collector_heartbeat', 1)
-    out.metric('duplika_collector_failed_components', sum(v == 'failed' for v in components.values()))
-    out.flush()
-    atomic_json(STATE / 'collector-health.json', {'at': time.time(), 'started_at': started_wall, 'agent_version': COLLECTOR_RELEASE, 'components': components})
-    atomic_json(STATE / 'state.json', state)
-    print(json.dumps({'status': 'ok', 'duration_seconds': round(duration, 3),
-                      'components': components, 'logs': len(out.logs), 'metrics': len(out.metrics)}))
+    with open(STATE / 'collector.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        state = read_json(STATE / 'state.json', {})
+        boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+        if state.get('boot_id') != boot:
+            state.pop('resource_samples_v16', None)
+            state.pop('proc', None)
+            state.pop('proc_uptime', None)
+            state.pop('log_policy_v2', None)
+        state['boot_id'] = boot
+        for obsolete in ('traffic_pending_v4', 'event_policy_v4', 'log_policy_v2'):
+            state.pop(obsolete, None)
+        if profile.get('monitoring_policy') == ESSENTIAL_POLICY:
+            # Retain reader offsets for rollback, not unused PID snapshots/traffic state.
+            for obsolete in ('proc', 'proc_uptime', 'resource_samples_v16', 'traffic_incidents_v16', 'process_detail_v21'):
+                state.pop(obsolete, None)
+        out = Output(profile, state)
+        started = time.monotonic()
+        if profile.get('monitoring_policy') == ESSENTIAL_POLICY:
+            return main_essential(profile, state, out, started)
+        domains, accounts, users = inventory()
+        components = {}
+        started_wall = time.time()
+        for name, fn in [
+            ('processes', lambda: sampled_component(out, state, 'processes',
+                lambda: collect_processes(out, state, domains, accounts, users), started_wall)),
+            ('lve', lambda: sampled_component(out, state, 'lve',
+                lambda: collect_lve(out, profile), started_wall)),
+            ('access', lambda: collect_access(out, state, domains, profile)),
+            ('errors', lambda: collect_errors(out, state, domains, profile)),
+            ('kernel', lambda: collect_kernel(out, state)),
+            ('wordpress', lambda: collect_wordpress(out, state, profile))]:
+            try:
+                components[name] = fn()
+            except Exception as error:
+                components[name] = 'failed'
+                out.log('collector_error', component=name, **error_diagnostic(error), level='warning')
+        duration = time.monotonic() - started
+        import resource
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        children = resource.getrusage(resource.RUSAGE_CHILDREN)
+        out.metric('duplika_collector_cpu_seconds', usage.ru_utime + usage.ru_stime)
+        out.metric('duplika_collector_peak_rss_bytes', usage.ru_maxrss * 1024)
+        out.metric('duplika_collector_cpu_with_children_seconds',
+                   usage.ru_utime + usage.ru_stime + children.ru_utime + children.ru_stime)
+        # Largest child RSS, not simultaneous total memory. Cgroup accounting measures the unit.
+        out.metric('duplika_collector_children_peak_rss_bytes', children.ru_maxrss * 1024)
+        out.metric('duplika_cpanel_accounts', len(accounts))
+        out.metric('duplika_cpanel_domains', len(domains))
+        failed = [name for name, value in components.items() if value == 'failed' or value is False]
+        status = 'degraded' if failed else 'ok'
+        out.log('collector_heartbeat', status=status, duration_seconds=round(duration, 3), accounts=len(accounts),
+                domains=len(domains), components=components, installation_id=profile['installation_id'],
+                suppressed_summary_logs=dict(out.suppressed))
+        out.metric('duplika_collector_duration_seconds', duration)
+        out.metric('duplika_collector_heartbeat', 1)
+        out.metric('duplika_collector_failed_components', len(failed))
+        out.flush()
+        atomic_json(STATE / 'collector-health.json', {'at': time.time(), 'started_at': started_wall,
+            'agent_version': COLLECTOR_RELEASE, 'components': components, 'status': status, 'boot_id': boot})
+        atomic_json(STATE / 'state.json', state)
+        print(json.dumps({'status': status, 'duration_seconds': round(duration, 3),
+                          'components': components, 'logs': len(out.logs), 'metrics': len(out.metrics)}))
 
 
 if __name__ == '__main__':
