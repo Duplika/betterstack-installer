@@ -1,10 +1,12 @@
-# Operación de la candidata rc28
+# Operación de la candidata rc29
+
+rc29 conserva la política y el grafo de rc28. Después de pausar el timer espera al servicio anterior antes de adquirir collector.lock: un arranque ya encolado puede no haber tomado aún ese bloqueo. Un ciclo anterior fallido sigue bloqueando el upgrade antes de reemplazar colector/perfil; no se borra el fallo automáticamente. El rollback permite hasta 120 s para la operación systemctl stop, incluyendo los 30 s que la unidad de transporte reserva para drenar. Distingue unidades nuevas ausentes de errores reales de parada. No modificar baseline ni reintentar sobre un rollback incompleto sin comprobar primero identidad, versiones, servicios y recepción.
 
 ## Alcance
 
-Sólo la selección explícita `--essential-monitoring` sobre observer-v4 rc26 completo o rc27 esencial con sonda activa cambia la política. Las rutas heredadas permanecen fuera de esta migración. No se cambia retención, fuente, credencial, aplicaciones, paquetes, límites LVE/Governor, firewall o sistema operativo.
+Sólo la selección explícita `--essential-monitoring` sobre observer-v4 rc26 completo o rc27/rc28 esencial con sonda activa selecciona esta política. Las rutas heredadas permanecen fuera de esta migración. No se cambia retención, fuente, credencial, aplicaciones, paquetes, límites LVE/Governor, firewall o sistema operativo.
 
-Preflight valida baseline/runtime oficial rc26/rc27, perfil/versiones, grafo original de Vector, señal de sonda reciente y volúmenes reales bajo el mismo sandbox de la sonda. Requiere un inventario no vacío y capacidad disponible/sólo lectura para todos los volúmenes reportados. No es inventario de montajes de red o discos sin montar. Ejecuta cloudlinux-statistics cuando LVE es aplicable y prueba el nuevo grafo con el Vector instalado. Publica sólo cantidades y costo de la consulta, sin nombres de clientes ni salida cruda.
+Preflight valida baseline/runtime oficial rc26/rc27/rc28, perfil/versiones, grafo original de Vector, señal de sonda reciente y volúmenes reales bajo el mismo sandbox de la sonda. Requiere un inventario no vacío y capacidad disponible/sólo lectura para todos los volúmenes reportados. No es inventario de montajes de red o discos sin montar. Ejecuta cloudlinux-statistics cuando LVE es aplicable y prueba el nuevo grafo con el Vector instalado. Publica sólo cantidades y costo de la consulta, sin nombres de clientes ni salida cruda.
 
 El upgrade repite esas comprobaciones, respalda código/perfil/configuración/manifiesto y estados de los servicios afectados, pausa timers, espera el lock y verifica nuevamente el baseline. Conserva los buffers y cursores. El transporte se detiene brevemente al reemplazar el grafo y se valida como duplikaobs antes de arrancarlo. La sonda no se reemplaza. Se exige un ciclo del código nuevo con marcador essential-v1 e I/O disponible antes de terminar la transacción. Ante fallo se restaura la última transacción sin retroceder cursores.
 

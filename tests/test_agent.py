@@ -174,7 +174,9 @@ class MigrationTests(unittest.TestCase):
     def test_rollback_preserves_checkpoints(self):
         with tempfile.TemporaryDirectory(dir='/root') as d:
             root=Path(d);state=root/'state';state.mkdir();p=root/'collector.py';p.write_text('old');checkpoint=root/'checkpoint';checkpoint.write_text('keep')
-            with patch.object(installer,'STATE',state),patch.object(installer,'run',return_value=result(code=1)),patch.object(installer,'execute',return_value=result()):
+            def run(args, **kwargs):
+                return result(code=1 if args[1] in ('is-active', 'is-enabled') else 0)
+            with patch.object(installer,'STATE',state),patch.object(installer,'run',side_effect=run),patch.object(installer,'execute',return_value=result()):
                 record=installer.backup([p,root/'new'],['test.timer']);p.write_text('new');(root/'new').write_text('new');installer.restore(record)
             self.assertEqual(p.read_text(),'old');self.assertEqual(checkpoint.read_text(),'keep');self.assertFalse((root/'new').exists())
     def test_unknown_legacy_not_adopted(self):

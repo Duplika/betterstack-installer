@@ -64,7 +64,7 @@ class RestoreTests(unittest.TestCase):
             'other.timer': {'active': True, 'enabled': True},
             'vector.service': {'active': True, 'enabled': True}}}
 
-    def service_result(self, args):
+    def service_result(self, args, **kwargs):
         if 'LoadState' in args:
             return result('not-found\n' if 'new.timer' in args else 'loaded\n')
         return result()
@@ -107,7 +107,7 @@ class RestoreTests(unittest.TestCase):
         self.assertLess(calls.index(['systemctl', 'start', 'vector.service']), calls.index(['systemctl', 'enable', 'other.timer']))
 
     def test_inactive_transport_is_reported_even_if_start_returns_success(self):
-        def run(args):
+        def run(args, **kwargs):
             if args == ['systemctl', 'is-active', '--quiet', 'vector.service']:
                 return result(code=3)
             return self.service_result(args)
@@ -119,6 +119,32 @@ class RestoreTests(unittest.TestCase):
         with patch.object(installer, 'restore', side_effect=RuntimeError('rollback_incomplete:fixture')):
             with self.assertRaisesRegex(RuntimeError, 'original_failure; rollback_incomplete:fixture'):
                 installer.recover_failure({}, RuntimeError('original_failure'))
+
+    def test_transport_stopping_within_its_unit_budget_is_not_a_probe_timeout(self):
+        def run(args, timeout=20):
+            if args == ['systemctl', 'stop', 'vector.service'] and timeout < 30:
+                raise RuntimeError('timeout:systemctl')
+            return self.service_result(args)
+        with patch.object(installer, 'run', side_effect=run), patch.object(installer, 'execute', return_value=result()):
+            installer.restore(self.record())
+
+    def test_loaded_unit_stop_failure_is_reported_and_recovery_continues(self):
+        def run(args, **kwargs):
+            if args == ['systemctl', 'stop', 'vector.service']:
+                return result(code=1)
+            return self.service_result(args)
+        with patch.object(installer, 'run', side_effect=run), patch.object(installer, 'execute', return_value=result()) as execute:
+            with self.assertRaisesRegex(RuntimeError, 'restore_stop_failed:vector.service:exit=1'):
+                installer.restore(self.record())
+        self.assertIn(__import__('unittest').mock.call(['systemctl', 'start', 'vector.service']), execute.call_args_list)
+
+    def test_absent_new_unit_does_not_make_rollback_incomplete(self):
+        def run(args, **kwargs):
+            if args == ['systemctl', 'stop', 'new.timer']:
+                return result(code=5)
+            return self.service_result(args)
+        with patch.object(installer, 'run', side_effect=run), patch.object(installer, 'execute', return_value=result()):
+            installer.restore(self.record())
 
     def test_systemctl_error_names_operation_unit_without_private_output(self):
         with patch.object(installer, 'run', return_value=result('private diagnostic', 1)):

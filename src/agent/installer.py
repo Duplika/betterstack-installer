@@ -216,7 +216,13 @@ def restore(record):
             errors.append(str(error))
     for service in record['services']:
         try:
-            run(['systemctl', 'stop', service])
+            # Match execute()'s service-operation budget. The probe default is
+            # only 20 s, shorter than the reviewed transport's 30 s stop window.
+            result = run(['systemctl', 'stop', service], timeout=120)
+            if result.returncode:
+                loaded = run(['systemctl', 'show', service, '-p', 'LoadState', '--value'])
+                if loaded.stdout.strip() != 'not-found':
+                    errors.append('restore_stop_failed:' + service + ':exit=' + str(result.returncode))
         except Exception:
             errors.append('restore_stop_failed:' + service)
     for path, item in record['files'].items():
@@ -631,6 +637,7 @@ def validate_v4_upgrade(target, caps):
                          '4.0.0-rc13': 'upgrade_rc13.json', '4.0.0-rc15': 'upgrade_rc15.json',
                          '4.0.0-rc10': 'upgrade_rc10.json', '4.0.0-rc17': 'upgrade_rc17.json',
                          '4.0.0-rc18': 'upgrade_rc18.json', '4.0.0-rc19': 'upgrade_rc19.json', '4.0.0-rc20': 'upgrade_rc20.json', '4.0.0-rc21': 'upgrade_rc21.json', '4.0.0-rc22': 'upgrade_rc22.json', '4.0.0-rc23': 'upgrade_rc23.json', '4.0.0-rc24': 'upgrade_rc24.json', '4.0.0-rc26': 'upgrade_rc26.json', '4.0.0-rc27': 'upgrade_rc27.json'}
+    reviewed_versions['4.0.0-rc28'] = 'upgrade_rc28.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -648,6 +655,7 @@ def validate_v4_upgrade(target, caps):
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
+    had_storage = had_storage or previous == '4.0.0-rc28'
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -732,6 +740,7 @@ def upgrade_v4(target, caps):
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
+    refresh_observer = refresh_observer or old['agent_version'] == '4.0.0-rc28'
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
@@ -745,6 +754,9 @@ def upgrade_v4(target, caps):
     try:
         execute(['systemctl', 'stop', *services])
         if refresh_observer:
+            # Stopping a timer does not finish an already queued oneshot. Let
+            # that job acquire its own nonblocking lock before we acquire it.
+            wait_observer_inactive()
             with observer_quiet_point():
                 if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
                     raise RuntimeError('upgrade:v4_changed_while_waiting')
@@ -932,7 +944,7 @@ def main():
     p.add_argument('--simplify-context', action='store_true',
                    help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
     p.add_argument('--aggregate-errors', action='store_true', help='Agrupar errores repetidos sólo en la base minimal-v4 revisada')
-    p.add_argument('--essential-monitoring', action='store_true', help='Migración explícita observer-v4 rc26/rc27 a monitoreo esencial con I/O privilegiado')
+    p.add_argument('--essential-monitoring', action='store_true', help='Migración explícita observer-v4 rc26/rc27/rc28 a monitoreo esencial con I/O privilegiado')
     p.add_argument('--user', help='Cuenta exacta del diagnóstico temporal')
     p.add_argument('--minutes', type=int, default=30)
     p.add_argument('--readers', nargs='+', choices=['access', 'lve', 'processes', 'wordpress'])
