@@ -20,7 +20,7 @@ def validate(api, old, target):
     if variant not in known:
         raise RuntimeError('upgrade:unreviewed_legacy_variant')
     version, config, profile, helper, blueprint, reference, services = known[variant]
-    if (old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24') or old.get('storage_observer')
+    if (old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc29', '4.0.0-rc30') or old.get('storage_observer')
             or old.get('config_path') != config or old.get('profile_path') != profile
             or old.get('services') != services + [api.NAME + '.timer']
             or old.get('oneshots') != [services[1][:-6] + '.service']
@@ -50,6 +50,10 @@ def validate(api, old, target):
     marker = old.get('migration_review', {}).get('error_aggregation')
     if marker is not None:
         generated = error_aggregation.prepare(generated, marker)
+    essential = old.get('migration_review', {}).get('essential_host_sampling')
+    if essential is not None:
+        import legacy_essential
+        generated = legacy_essential.prepare(generated, essential)
     # Embedded tests are inactive; all active sources/transforms/sinks must match.
     cfg.pop('tests', None); generated.pop('tests', None)
     if cfg != generated:

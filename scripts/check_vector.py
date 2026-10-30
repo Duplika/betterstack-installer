@@ -11,6 +11,7 @@ import error_aggregation
 import threading
 import copy
 import config as observer_config
+import legacy_essential
 
 
 def main():
@@ -36,6 +37,26 @@ def main():
     check_aggregation(args.vector, aggregation, native_dates=True)
     check_reader_aggregation(args.vector, aggregation)
     check_event_time_bound(args.vector, aggregation)
+    # Both inherited transports retain their complete WordPress/error graphs.
+    spec = importlib.util.spec_from_file_location('alma_reference', root/'src/legacy/legacy_alma_profile.py')
+    alma = importlib.util.module_from_spec(spec); spec.loader.exec_module(alma)
+    legacy_bases = [aggregation, alma.make_config(profile, 'TEST_SECRET', 's1234568.us-west-2a.betterstackdata.com')]
+    for base in legacy_bases:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder)/'legacy-essential.json'
+            path.write_text(json.dumps(legacy_essential.prepare(base)))
+            subprocess.run([args.vector, 'test', '--config-json', str(path)], check=True, timeout=120)
+            subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(path)], check=True, timeout=120)
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder)/'host-probe.json'
+        data = Path(folder)/'data'; data.mkdir()
+        path.write_text(json.dumps(legacy_essential.probe_config(aggregation, data)))
+        sample = subprocess.run(['timeout', '--kill-after=2s', '--signal=INT', '3s',
+                                 args.vector, '--config-json', str(path)],
+                                capture_output=True, text=True, timeout=10)
+        assert sample.returncode in (0, 124), 'Native local-only host probe failed'
+        legacy_essential.coverage(sample.stdout)
+    print('Legacy essential: both native WordPress graphs and local-only host probe passed.')
     essential = observer_config.make_config({'host': 'cloud.example.net', 'server_ip': '203.0.113.20',
         'monitoring_policy': 'essential-v1', 'disk_io_observer': True}, 'TEST_SECRET', 's1234568.us-west-2a.betterstackdata.com')
     with tempfile.TemporaryDirectory() as folder:
