@@ -1,3 +1,11 @@
+# 4.0.0-rc29 — candidata: esperar ciclos encolados y respetar el plazo de parada
+
+Corrige una carrera del upgrade: detener un timer no garantiza que el servicio anterior haya terminado de arrancar. Tomar collector.lock primero podía provocar EAGAIN en ese ciclo y abortar con previous_observer_job_failed. Las rutas esencial y observer-v4 esperan al servicio antes del bloqueo y de reemplazar archivos; conservan también la comprobación posterior y rechazan fallos reales sin ocultarlos.
+
+El rollback usaba el plazo de probes de 20 s para detener una unidad que permite hasta 30 s. Ahora usa 120 s, igual que las operaciones de servicio del instalador; comprueba códigos de salida y no trata como fallo la ausencia esperada de una unidad nueva. Conserva el error original si la recuperación realmente falla y no retrocede cursores ni buffers.
+
+Agrega la base congelada rc28 a las migraciones revisadas, con hashes extraídos de su artefacto inmutable. El grafo, los privilegios, las unidades, las frecuencias y el protocolo remoto no cambian. Las pruebas reproducen EAGAIN ejecutando main() del colector rc26 congelado con un bloqueo real y ejercitan un ciclo encolado durante la transacción. La candidata aún requiere publicación y aceptación nativa/remota; las pruebas locales no certifican el estado de ningún servidor.
+
 # 4.0.0-rc28 — candidata: I/O privilegiado y salud sin falsos heartbeats inactivos
 
 La migración explícita --essential-monitoring acepta las bases oficiales rc26 observer-v4 y rc27 esencial con sonda. Conserva los artefactos anteriores, fuente, credencial, buffers, offsets y unidades del transporte/observador. El colector root ya existente lee I/O cada 300 s y emite los cuatro contadores disk_* de Vector 0.60; Vector conserva red cada 300 s y deja de leer disk. No cambia permisos del kernel, capacidades ni el usuario del transporte. Preflight exige muestras nativas del parser y el primer ciclo real instalado debe confirmar I/O; cualquier fallo revierte sin retroceder cursores. Un segundo vector.service activo bloquea la migración y nunca se inicia automáticamente.
