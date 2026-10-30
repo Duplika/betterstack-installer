@@ -192,6 +192,8 @@ def status(publish=False, quiet=False):
         event['observer_health'] = observer
     if meta.get('resource_sampling'):
         event['resource_sampling'] = meta['resource_sampling']
+    if meta.get('monitoring_policy'):
+        event['monitoring_policy'] = meta['monitoring_policy']
     old = json.loads(read(STATE / 'last-send.json')) if (STATE / 'last-send.json').exists() else {}
     digest = hashlib.sha256(canonical(hashes)).hexdigest()
     stable = {key: value for key, value in event.items() if key != 'dt'}

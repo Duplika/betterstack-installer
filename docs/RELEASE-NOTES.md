@@ -1,3 +1,11 @@
+# 4.0.0-rc30 — candidata: muestreo de host liviano sin perder errores WordPress
+
+Agrega una selección explícita --essential-monitoring para los dos layouts heredados AlmaLinux WordPress revisados. Conserva lectores incrementales, filtros/agregaciones WordPress/PHP/WooCommerce, fuente, credencial, perfil, unidades, usuario, data_dir, buffers y offsets. CPU/RAM esencial/carga/host/filesystem siguen a 60 s; disk/network pasan a 300 s. No instala sonda root/SMART, ejecuta WordPress ni consulta SQL; la política se identifica como essential-host-v1.
+
+Preflight compara el blueprint oficial y valida el nuevo grafo con Vector nativo. Una sonda temporal local de host, sin credenciales ni destino remoto, exige filesystem, red y cuatro contadores válidos por disco como usuario vector. No reproduce el sandbox completo de systemd ni acredita entrega remota. El upgrade drena y reinicia sólo el emisor existente, valida como vector y revierte archivos ante fallo sin retroceder cursores. Bloquea un segundo emisor activo y usuarios no revisados.
+
+Incorpora la base rc29 congelada para conservar la ruta observer-v4 y las correcciones de quiescencia/rollback de rc29. No cambia las referencias legacy ni los artefactos publicados. Las pruebas cubren ambos grafos nativos, conservación de lectores y destinos, configuración alterada, emisor duplicado, cobertura incompleta, idempotencia y rollback con cursores avanzados. La aceptación requiere el servicio real, recepción remota, dos muestras lentas y comparación de costo durante 24 h; no se declara aceptación del piloto con pruebas locales.
+
 # 4.0.0-rc29 — candidata: esperar ciclos encolados y respetar el plazo de parada
 
 Corrige una carrera del upgrade: detener un timer no garantiza que el servicio anterior haya terminado de arrancar. Tomar collector.lock primero podía provocar EAGAIN en ese ciclo y abortar con previous_observer_job_failed. Las rutas esencial y observer-v4 esperan al servicio antes del bloqueo y de reemplazar archivos; conservan también la comprobación posterior y rechazan fallos reales sin ocultarlos.

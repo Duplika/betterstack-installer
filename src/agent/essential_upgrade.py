@@ -57,12 +57,12 @@ def storage_coverage(api):
 
 def plan(api, target, caps):
     old = api.validate_v4_upgrade(target, caps)
-    if old.get('agent_version') not in ('4.0.0-rc26', '4.0.0-rc27', '4.0.0-rc28') or old.get('pipeline_variant') != 'observer-v4' or not old.get('storage_observer'):
-        raise RuntimeError('essential:requires_complete_rc26_rc27_or_rc28_observer_with_storage')
+    if old.get('agent_version') not in ('4.0.0-rc26', '4.0.0-rc27', '4.0.0-rc28', '4.0.0-rc29') or old.get('pipeline_variant') != 'observer-v4' or not old.get('storage_observer'):
+        raise RuntimeError('essential:requires_complete_reviewed_observer_with_storage')
     api.identity.status(quiet=True)
     profile = api.load(api.CLOUD / 'profile.json')
     expected_policy = None if old['agent_version'] == '4.0.0-rc26' else collector.ESSENTIAL_POLICY
-    expected_disk = old['agent_version'] == '4.0.0-rc28'
+    expected_disk = old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29')
     disk_matches = profile.get('disk_io_observer') is True if expected_disk else not profile.get('disk_io_observer')
     if profile.get('monitoring_policy') != expected_policy or not disk_matches:
         raise RuntimeError('essential:unexpected_existing_policy')
@@ -95,6 +95,10 @@ def plan(api, target, caps):
 
 def migrate(api, target, caps, apply=False):
     current = api.load(api.BASE / 'manifest.json')
+    if current.get('pipeline_variant') != 'observer-v4':
+        import legacy_essential
+        legacy_essential.migrate(api, target, caps, apply=apply)
+        return
     if current.get('agent_version') == api.VERSION:
         api.validate_current(target, caps)
         selected = api.load(api.CLOUD / 'profile.json')
