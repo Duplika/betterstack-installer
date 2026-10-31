@@ -91,6 +91,42 @@ def litespeed_home(reader):
     return home
 
 
+def vendor_release(home):
+    """Read only the vendor's lsadm-owned edition marker, never executable code.
+
+    Open relative to a pinned directory fd; forbid symlinks, special files,
+    writable-by-other metadata and unexpected owners. No trust is inherited by
+    binaries, INI, modules, credentials or agent integrity files.
+    """
+    import os
+    import pwd
+    import stat
+    owners = {0}
+    try:
+        owners.add(pwd.getpwnam('lsadm').pw_uid)
+    except KeyError:
+        pass
+    directory = os.open(str(home / 'autoupdate'), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        parent = os.fstat(directory)
+        if parent.st_uid not in owners or parent.st_mode & 0o022:
+            raise ValueError('vendor_directory_unsafe')
+        fd = os.open('release', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid not in owners
+                    or info.st_mode & 0o022 or info.st_size > 256):
+                raise ValueError('vendor_release_unsafe')
+            value = os.read(fd, 257)
+            if len(value) > 256:
+                raise ValueError('vendor_release_too_large')
+            return value.decode('ascii').strip()
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory)
+
+
 def timezone_observations(reader, fetch=catalog_text, finder=trusted_executable,
                           runner=run, php_root=Path('/opt/cpanel')):
     """Probe only EA4 runtimes with -n; no site/config code is executed."""
@@ -165,25 +201,34 @@ def probe_litespeed(reader, fetch=catalog_text):
     import re
     result = {'status': 'unknown', 'server': {'status': 'unknown'},
               'timezonedb': {'status': 'unknown', 'php': []}}
+    stage = 'installation_detection'
     try:
         home = litespeed_home(reader)
         if home is None:
             return {'status': 'not_applicable', 'server': {'status': 'not_applicable'},
                     'timezonedb': {'status': 'not_applicable', 'php': []}}
         result['status'] = 'installed'
+        stage = 'installed_version'
         installed = maintenance_text(home / 'VERSION', reader)
         numeric_version(installed)
         # lsup uses BUILD.<VERSION>; fall back to documented BUILD only if absent.
+        stage = 'installed_build'
         build_path = home / ('BUILD.' + installed)
         build = maintenance_text(build_path if build_path.exists() else home / 'BUILD', reader)
         if not re.fullmatch(r'[0-9]{1,8}', build):
             raise ValueError('invalid_build')
-        release = maintenance_text(home / 'autoupdate/release', reader)
+        result['server'].update(installed=installed, installed_build=int(build))
+        stage = 'enterprise_marker'
+        release = vendor_release(home)
         if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,3}-ent', release):
             result['reason'] = 'enterprise_not_confirmed'
             return result
         result['server'].update(installed=installed, installed_build=int(build))
-    except Exception:
+    except Exception as error:
+        result['stage'] = stage
+        result['failure_kind'] = ('missing' if isinstance(error, FileNotFoundError) else
+            'permission_denied' if isinstance(error, PermissionError) else
+            'invalid_metadata' if isinstance(error, ValueError) else 'local_read_failed')
         result['reason'] = 'installation_probe_failed'
         return result
     try:
@@ -212,7 +257,7 @@ def daily_litespeed(state, reader, writer, now, online=False):
     try:
         old = json.loads(reader(path))
         checked = old.get('checked_at')
-        valid = (isinstance(checked, (int, float)) and not isinstance(checked, bool)
+        valid = (old.get('probe_schema') == 2 and isinstance(checked, (int, float)) and not isinstance(checked, bool)
                  and math.isfinite(checked) and isinstance(old.get('observation'), dict))
         if valid and 0 <= now - checked < 86400:
             return old
@@ -221,7 +266,7 @@ def daily_litespeed(state, reader, writer, now, online=False):
     if not online:
         return {'checked_at': None, 'observation': {'status': 'not_checked'}}
     observed = probe_litespeed(reader)
-    result = {'checked_at': now, 'observation': observed}
+    result = {'probe_schema': 2, 'checked_at': now, 'observation': observed}
     writer(path, result)
     return result
 

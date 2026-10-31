@@ -1,3 +1,13 @@
+# 4.0.0-rc32 — candidata: lectura acotada del marcador lsadm
+
+Corrige el rechazo de autoupdate/release cuando lo administra lsadm. Lector
+exclusivo de datos con descriptores relativos, O_NOFOLLOW/O_NONBLOCK, tamaño
+máximo 256 bytes, propietario root/lsadm y permisos sin escritura de terceros.
+Sin cambios a permisos del servidor ni confianza de código ejecutable. Agrega
+etapa y categoría de fallo al diagnóstico sin copiar excepciones. Esquema de
+caché nuevo para no conservar un fallo previo tras actualizar. Congela hashes
+rc31; conserva fuentes, políticas, Vector, buffers y cursores. Requiere piloto.
+
 # 4.0.0-rc31 — candidata: mantenimiento LiteSpeed diario y sólo donde aplica
 
 Comprobación de STABLE (versión/build) y timezonedb EA4 en identidad, con caché

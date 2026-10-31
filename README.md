@@ -1,6 +1,6 @@
-# Better Stack installer — candidata rc30
+# Better Stack installer — candidata rc32
 
-Monitoreo esencial para servidores cPanel con una migración explícita desde **observer-v4 rc26 completo o rc27/rc28/rc29 esencial, con sonda de almacenamiento**, y ajuste de host para los dos transportes AlmaLinux WordPress revisados. rc30 es candidata: no implica aceptación remota ni promoción a estable. Los artefactos previos y las referencias legacy se conservan intactos.
+Monitoreo esencial para servidores cPanel con una migración explícita desde **observer-v4 rc26 completo o rc27/rc28/rc29 esencial, con sonda de almacenamiento**, y ajuste de host para los dos transportes AlmaLinux WordPress revisados. rc32 es candidata: no implica aceptación remota ni promoción a estable. Los artefactos previos y las referencias legacy se conservan intactos.
 
 rc28 mueve la lectura de I/O a su colector root ya existente, sin elevar privilegios de Vector ni cambiar protecciones del sistema. Separa la frescura del heartbeat de los componentes degradados y conserva diagnósticos de comandos clasificados, sin salida privada.
 
@@ -139,3 +139,14 @@ Tras revisar la salida y los costos nativos, una base v4 rc30 íntegra admite
 preflight/upgrade/verify normales; conserva la política esencial ya elegida,
 transporte, credenciales, buffers y offsets. Publicar la candidata no la instala.
 Se requiere piloto y aceptación remota antes de extender a la flota.
+
+### rc32: metadatos propiedad de lsadm
+
+El marcador autoupdate/release puede pertenecer legítimamente a lsadm. rc32 lo
+lee como dato acotado (256 bytes), con descriptores fijados y O_NOFOLLOW, sólo
+propietarios root/lsadm y sin escritura de grupo/otros. Rechaza enlaces, FIFO,
+archivos especiales y otros propietarios; no modifica permisos. No se relaja la
+confianza root del ejecutable, VERSION, BUILD.VERSION, PHP, módulos, INI ni del
+agente. Diagnóstico local incluye etapa y categoría fija, sin salida privada.
+Invalida la caché anterior una vez al cambiar el esquema de la sonda. Candidata
+para repetir el piloto; no se presume aceptada en servidor ni desplegada.

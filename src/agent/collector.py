@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc31'
+COLLECTOR_RELEASE = '4.0.0-rc32'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
