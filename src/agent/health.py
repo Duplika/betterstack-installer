@@ -34,3 +34,321 @@ def observe(runner=run, finder=trusted_executable):
         except Exception:
             result.update(reason='reboot_probe_failed')
     return result
+
+
+MAINTENANCE_SCHEMA = 4
+
+
+# Daily, read-only LiteSpeed maintenance. No vendor shell scripts are executed.
+# Keep this in the existing integrity-checked runtime so old transports do not change.
+def numeric_version(value):
+    import re
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9]{1,6}(?:\.[0-9]{1,6}){1,3}', value):
+        raise ValueError('invalid_version')
+    return tuple(map(int, value.split('.'))) + (0,) * (4 - len(value.split('.')))
+
+
+def maintenance_text(path, reader, limit=16384):
+    value = reader(Path(path))
+    if len(value) > limit:
+        raise ValueError('metadata_too_large')
+    return value.decode('ascii').strip()
+
+
+def catalog_text(url):
+    """Fixed HTTPS origins, no redirects/proxies/curlrc, bounded body/time."""
+    allowed = ('https://update.litespeedtech.com/ws/latest.php',
+               'https://pecl.php.net/rest/r/timezonedb/stable.txt')
+    if url not in allowed:
+        raise ValueError('catalog_not_allowed')
+    curl = trusted_executable('curl')
+    if not curl:
+        raise RuntimeError('curl_unavailable')
+    result = run([curl, '-q', '--fail', '--silent', '--show-error',
+        '--proto', '=https', '--tlsv1.2', '--connect-timeout', '3', '--max-time', '6',
+        '--max-filesize', '16384', '--noproxy', '*', url], timeout=8)
+    if result.returncode or result.stderr.strip() or len(result.stdout) > 16384:
+        raise RuntimeError('catalog_failed')
+    return result.stdout.strip()
+
+
+def litespeed_home(reader):
+    import re
+    config = Path('/usr/local/cpanel/whostmgr/docroot/cgi/lsws/LSWS_HOME.config')
+    home = Path('/usr/local/lsws')
+    if config.exists() or config.is_symlink():
+        # Unlike the vendor updater, do not silently fall back after bad config.
+        text = maintenance_text(config, reader)
+        lines = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith('#')]
+        if not lines or not lines[0].startswith('LSWS_HOME='):
+            raise ValueError('home_config_invalid')
+        value = lines[0].split('=', 1)[1]
+        if not re.fullmatch(r'/[A-Za-z0-9/._-]+', value) or '..' in value:
+            raise ValueError('home_config_invalid')
+        home = Path(value)
+    # No runtime process scan, binaries, network, PHP or catalogs on absent hosts.
+    if not (home / 'bin/lshttpd').exists():
+        return None
+    if not trusted_executable(str(home / 'bin/lshttpd')):
+        raise ValueError('binary_untrusted')
+    return home
+
+
+def vendor_release(home):
+    """Read only the vendor's lsadm-owned edition marker, never executable code.
+
+    Open relative to a pinned directory fd; forbid symlinks, special files,
+    writable-by-other metadata and unexpected owners. No trust is inherited by
+    binaries, INI, modules, credentials or agent integrity files.
+    """
+    import os
+    import pwd
+    import stat
+    owners = {0}
+    try:
+        owners.add(pwd.getpwnam('lsadm').pw_uid)
+    except KeyError:
+        pass
+    directory = os.open(str(home / 'autoupdate'), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        parent = os.fstat(directory)
+        if parent.st_uid not in owners or parent.st_mode & 0o022:
+            raise ValueError('vendor_directory_unsafe')
+        fd = os.open('release', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid not in owners
+                    or info.st_mode & 0o022 or info.st_size > 256):
+                raise ValueError('vendor_release_unsafe')
+            value = os.read(fd, 257)
+            if len(value) > 256:
+                raise ValueError('vendor_release_too_large')
+            return value.decode('ascii').strip()
+        finally:
+            os.close(fd)
+    finally:
+        os.close(directory)
+
+
+def ea_ini_text(path, base):
+    """Read EA4 INI as data; allow group-write only on a root:root file.
+
+    Never pass these INI to PHP. Executables/modules and all directory paths
+    retain the strict root-only, no group/world-write trust policy.
+    """
+    import os
+    import stat
+    for item in (path, *path.parents):
+        info = item.lstat()
+        regular_data = item == path and stat.S_ISREG(info.st_mode)
+        forbidden = 0o002 if regular_data and info.st_gid == 0 else 0o022
+        if info.st_uid != 0 or (not item.is_symlink() and info.st_mode & forbidden):
+            raise ValueError('ini_path_untrusted')
+    resolved = path.resolve(strict=True)
+    resolved.relative_to(base.resolve(strict=True))
+    for item in resolved.parents:
+        info = item.lstat()
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError('ini_parent_untrusted')
+    fd = os.open(str(resolved), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        forbidden = 0o002 if info.st_gid == 0 else 0o022
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
+                info.st_mode & forbidden or info.st_size > 262144):
+            raise ValueError('ini_file_untrusted')
+        value = os.read(fd, 262145)
+        if len(value) > 262144:
+            raise ValueError('ini_limit')
+    finally:
+        os.close(fd)
+    # Comments need not be ASCII. Only ASCII extension declarations are matched.
+    return value.decode('utf-8', errors='replace')
+
+
+def timezone_observations(reader, fetch=catalog_text, finder=trusted_executable,
+                          runner=run, php_root=Path('/opt/cpanel')):
+    """Probe only EA4 runtimes with -n; no site/config code is executed."""
+    import re
+    roots = sorted(php_root.glob('ea-php[0-9][0-9]'))
+    roots = [p for p in roots if (p / 'root/usr/bin/php').exists()]
+    if len(roots) > 12:
+        return {'status': 'unknown', 'reason': 'php_limit', 'php': []}
+    if not roots:
+        return {'status': 'not_applicable', 'php': []}
+    try:
+        latest = fetch('https://pecl.php.net/rest/r/timezonedb/stable.txt')
+        numeric_version(latest)
+    except Exception:
+        latest = None
+    rows = []
+    for root in roots:
+        row = {'php': root.name[6:], 'status': 'unknown'}
+        rows.append(row)
+        stage = 'module_security'
+        try:
+            base = root / 'root'
+            module = base / 'usr/lib64/php/modules/timezonedb.so'
+            if not module.exists():
+                row.update(status='missing', reason='extension_missing')
+                continue
+            # Validate ownership of binary/module and every resolved parent.
+            path = module.resolve()
+            for item in (module, *module.parents, path, *path.parents):
+                st = item.stat()
+                if st.st_uid != 0 or st.st_mode & 0o022:
+                    raise ValueError('untrusted_module')
+            if not path.is_file():
+                raise ValueError('untrusted_module')
+            ini_paths = [base / 'etc/php.ini', *sorted((base / 'etc/php.d').glob('*.ini'))]
+            if len(ini_paths) > 128:
+                raise ValueError('ini_limit')
+            stage = 'ini_read'
+            enabled = False
+            for ini in ini_paths:
+                if not ini.exists():
+                    continue
+                text = ea_ini_text(ini, base)
+                for line in text.splitlines():
+                    match = re.fullmatch(r'\s*extension\s*=\s*[\"\']?([^\"\';\s]+)[\"\']?\s*(?:;.*)?', line, re.I)
+                    if match and match[1] in ('timezonedb', 'timezonedb.so', str(module)):
+                        enabled = True
+            if not enabled:
+                row.update(status='missing', reason='extension_not_enabled')
+                continue
+            stage = 'php_binary'
+            php = finder(str(base / 'usr/bin/php'))
+            if not php:
+                raise ValueError('php_untrusted')
+            stage = 'php_execution'
+            response = runner([php, '-n', '-d', 'extension=' + str(module), '-r',
+                'echo extension_loaded("timezonedb") ? timezone_version_get() : "";'], timeout=3)
+            installed = response.stdout.strip()
+            if response.returncode or response.stderr.strip():
+                raise ValueError('php_probe_failed')
+            stage = 'version_parse'
+            numeric_version(installed)
+            row['installed'] = installed
+            if latest is None:
+                row['reason'] = 'catalog_failed'
+            else:
+                row.update(available=latest, status='update_available' if
+                    numeric_version(installed) < numeric_version(latest) else 'current')
+        except Exception as error:
+            row.update(status='unknown', reason='local_probe_failed', stage=stage,
+                failure_kind='permission_denied' if isinstance(error, PermissionError) else
+                    'missing' if isinstance(error, FileNotFoundError) else
+                    'invalid_metadata' if isinstance(error, ValueError) else 'local_probe_failed')
+    statuses = {row['status'] for row in rows}
+    status = next((s for s in ('missing', 'update_available', 'unknown') if s in statuses), 'current')
+    return {'status': status, 'php': rows, **({'available': latest} if latest else {})}
+
+
+def probe_litespeed(reader, fetch=catalog_text):
+    import re
+    result = {'status': 'unknown', 'server': {'status': 'unknown'},
+              'timezonedb': {'status': 'unknown', 'php': []}}
+    stage = 'installation_detection'
+    try:
+        home = litespeed_home(reader)
+        if home is None:
+            return {'status': 'not_applicable', 'server': {'status': 'not_applicable'},
+                    'timezonedb': {'status': 'not_applicable', 'php': []}}
+        result['status'] = 'installed'
+        stage = 'installed_version'
+        installed = maintenance_text(home / 'VERSION', reader)
+        numeric_version(installed)
+        # lsup uses BUILD.<VERSION>; fall back to documented BUILD only if absent.
+        stage = 'installed_build'
+        build_path = home / ('BUILD.' + installed)
+        build = maintenance_text(build_path if build_path.exists() else home / 'BUILD', reader)
+        if not re.fullmatch(r'[0-9]{1,8}', build):
+            raise ValueError('invalid_build')
+        result['server'].update(installed=installed, installed_build=int(build))
+        stage = 'enterprise_marker'
+        release = vendor_release(home)
+        if not re.fullmatch(r'[0-9]+(?:\.[0-9]+){1,3}-ent', release):
+            result['reason'] = 'enterprise_not_confirmed'
+            return result
+        result['server'].update(installed=installed, installed_build=int(build))
+    except Exception as error:
+        result['stage'] = stage
+        result['failure_kind'] = ('missing' if isinstance(error, FileNotFoundError) else
+            'permission_denied' if isinstance(error, PermissionError) else
+            'invalid_metadata' if isinstance(error, ValueError) else 'local_read_failed')
+        result['reason'] = 'installation_probe_failed'
+        return result
+    try:
+        catalog = fetch('https://update.litespeedtech.com/ws/latest.php')
+        matches = re.findall(r'^LSWS_STABLE=([0-9]+(?:\.[0-9]+){1,3}) BUILD ([0-9]{1,8})\s*$', catalog, re.M)
+        if len(matches) != 1:
+            raise ValueError('invalid_stable_catalog')
+        version, build = matches[0]
+        remote, local = numeric_version(version), numeric_version(installed)
+        state = 'version_available' if remote > local else (
+            'build_available' if remote == local and int(build) > result['server']['installed_build'] else (
+            'ahead_of_stable' if remote < local or int(build) < result['server']['installed_build'] else 'current'))
+        result['server'].update(status=state, available=version, available_build=int(build), channel='stable')
+    except Exception:
+        result['server']['reason'] = 'catalog_failed'
+    result['timezonedb'] = timezone_observations(reader, fetch)
+    return result
+
+
+def daily_litespeed(state, reader, writer, now, online=False):
+    """Single daily attempt, errors included. Verification never triggers network."""
+    import json
+    import math
+    path = Path(state) / 'litespeed-maintenance.json'
+    old = {}
+    try:
+        old = json.loads(reader(path))
+        checked = old.get('checked_at')
+        valid = (old.get('probe_schema') == MAINTENANCE_SCHEMA and isinstance(checked, (int, float)) and not isinstance(checked, bool)
+                 and math.isfinite(checked) and isinstance(old.get('observation'), dict))
+        if valid and 0 <= now - checked < 86400:
+            return old
+    except Exception:
+        pass
+    if not online:
+        return {'checked_at': None, 'observation': {'status': 'not_checked'}}
+    observed = probe_litespeed(reader)
+    result = {'probe_schema': MAINTENANCE_SCHEMA, 'checked_at': now, 'observation': observed}
+    writer(path, result)
+    return result
+
+
+def maintenance_metrics(record, target):
+    import datetime
+    observation = record['observation']
+    if record.get('checked_at') is None:
+        return []
+    at = datetime.datetime.fromtimestamp(record['checked_at'], datetime.timezone.utc).isoformat()
+    common = {'host': target['host'], 'server_ip': target['server_ip']}
+    rows = []
+    def add(name, state, tags=None):
+        codes = {'not_applicable': -2, 'not_checked': -1, 'unknown': -1, 'current': 0,
+                 'ahead_of_stable': 0, 'version_available': 1, 'build_available': 1,
+                 'update_available': 1, 'missing': 2}
+        rows.append({'dt': at, 'name': name, 'gauge': {'value': codes.get(state, -1)},
+                     'tags': dict(common, status=state, **(tags or {}))})
+    server = observation.get('server', {'status': 'unknown'})
+    add('duplika_litespeed_update_state', server['status'], {
+        key: str(server.get(key, '')) for key in ('installed', 'installed_build', 'available', 'available_build')})
+    tz = observation.get('timezonedb', {'status': 'unknown', 'php': []})
+    add('duplika_timezonedb_update_state', tz['status'])
+    for php in tz.get('php', []):
+        add('duplika_timezonedb_php_update_state', php['status'], {
+            key: str(php.get(key, '')) for key in ('php', 'installed', 'available')})
+    return rows
+
+
+def reboot_metrics(observation, target, now):
+    """A local recommendation, not security urgency or a live-patch assessment."""
+    import datetime
+    state = observation.get('reboot_status', 'unknown')
+    value = {'indicated': 1, 'not_indicated': 0}.get(state, -1)
+    return [{'dt': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat(),
+        'name': 'duplika_reboot_recommended', 'gauge': {'value': value},
+        'tags': {'host': target['host'], 'server_ip': target['server_ip'],
+                 'status': state, 'reason': observation.get('reason', 'reboot_probe_unavailable')}}]

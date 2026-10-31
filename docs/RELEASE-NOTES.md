@@ -1,3 +1,123 @@
+# 4.0.0-rc34 — candidata: INI EA4 root:root 0664 como datos
+
+Lector específico que admite escritura del grupo root sólo en un archivo INI
+regular propiedad de root:root. Rechaza otros propietarios/grupos escritores,
+escritura para otros, archivos especiales, directorios inseguros y destinos
+fuera del runtime. Lectura acotada por descriptor sin seguir el enlace final.
+No modifica permisos ni carga INI en PHP; módulos/binarios conservan controles
+root estrictos. Renueva la caché y congela hashes rc33. Requiere piloto nativo.
+
+# 4.0.0-rc33 — candidata: reinicio recomendado en mantenimiento
+
+Expone como métrica la observación local de reinicio ya existente, sin agregar
+consultas DNF. Se envía al cambiar o diariamente; estados desconocidos permanecen
+explícitos y no hay reinicios automáticos. Aplica con o sin LiteSpeed.
+INI EA4: enlaces root limitados al mismo runtime, lectura UTF-8 y diagnóstico
+por etapa de fallos timezoneDB. La sonda PHP continúa usando -n sin cargar INI.
+Renueva esquema de caché, congela hashes rc32 y conserva transporte/cursores.
+Prueba maintenance-check incluye reinicio. Requiere aceptación nativa/remota.
+
+# 4.0.0-rc32 — candidata: lectura acotada del marcador lsadm
+
+Corrige el rechazo de autoupdate/release cuando lo administra lsadm. Lector
+exclusivo de datos con descriptores relativos, O_NOFOLLOW/O_NONBLOCK, tamaño
+máximo 256 bytes, propietario root/lsadm y permisos sin escritura de terceros.
+Sin cambios a permisos del servidor ni confianza de código ejecutable. Agrega
+etapa y categoría de fallo al diagnóstico sin copiar excepciones. Esquema de
+caché nuevo para no conservar un fallo previo tras actualizar. Congela hashes
+rc31; conserva fuentes, políticas, Vector, buffers y cursores. Requiere piloto.
+
+# 4.0.0-rc31 — candidata: mantenimiento LiteSpeed diario y sólo donde aplica
+
+Comprobación de STABLE (versión/build) y timezonedb EA4 en identidad, con caché
+diaria de intentos, límites de tiempo/salida, detección previa y estados de error
+explícitos. PHP usa -n sin INI ni sitios; configuración EA4 se lee de forma
+acotada para detectar extensión no habilitada. No ejecuta scripts de actualización.
+Métricas directas diarias con fecha de observación y recibo de entrega independiente.
+Prueba maintenance-check sin instalar ni publicar telemetría. Conserva muestreo,
+servicios de transporte, fuentes y cursores. Admite base rc30 congelada con hashes.
+Pruebas offline no acreditan compatibilidad ni recepción nativas; requiere piloto.
+
+# 4.0.0-rc30 — candidata: muestreo de host liviano sin perder errores WordPress
+
+Agrega una selección explícita --essential-monitoring para los dos layouts heredados AlmaLinux WordPress revisados. Conserva lectores incrementales, filtros/agregaciones WordPress/PHP/WooCommerce, fuente, credencial, perfil, unidades, usuario, data_dir, buffers y offsets. CPU/RAM esencial/carga/host/filesystem siguen a 60 s; disk/network pasan a 300 s. No instala sonda root/SMART, ejecuta WordPress ni consulta SQL; la política se identifica como essential-host-v1.
+
+Preflight compara el blueprint oficial y valida el nuevo grafo con Vector nativo. Una sonda temporal local de host, sin credenciales ni destino remoto, exige filesystem, red y cuatro contadores válidos por disco como usuario vector. No reproduce el sandbox completo de systemd ni acredita entrega remota. El upgrade drena y reinicia sólo el emisor existente, valida como vector y revierte archivos ante fallo sin retroceder cursores. Bloquea un segundo emisor activo y usuarios no revisados.
+
+Incorpora la base rc29 congelada para conservar la ruta observer-v4 y las correcciones de quiescencia/rollback de rc29. No cambia las referencias legacy ni los artefactos publicados. Las pruebas cubren ambos grafos nativos, conservación de lectores y destinos, configuración alterada, emisor duplicado, cobertura incompleta, idempotencia y rollback con cursores avanzados. La aceptación requiere el servicio real, recepción remota, dos muestras lentas y comparación de costo durante 24 h; no se declara aceptación del piloto con pruebas locales.
+
+# 4.0.0-rc29 — candidata: esperar ciclos encolados y respetar el plazo de parada
+
+Corrige una carrera del upgrade: detener un timer no garantiza que el servicio anterior haya terminado de arrancar. Tomar collector.lock primero podía provocar EAGAIN en ese ciclo y abortar con previous_observer_job_failed. Las rutas esencial y observer-v4 esperan al servicio antes del bloqueo y de reemplazar archivos; conservan también la comprobación posterior y rechazan fallos reales sin ocultarlos.
+
+El rollback usaba el plazo de probes de 20 s para detener una unidad que permite hasta 30 s. Ahora usa 120 s, igual que las operaciones de servicio del instalador; comprueba códigos de salida y no trata como fallo la ausencia esperada de una unidad nueva. Conserva el error original si la recuperación realmente falla y no retrocede cursores ni buffers.
+
+Agrega la base congelada rc28 a las migraciones revisadas, con hashes extraídos de su artefacto inmutable. El grafo, los privilegios, las unidades, las frecuencias y el protocolo remoto no cambian. Las pruebas reproducen EAGAIN ejecutando main() del colector rc26 congelado con un bloqueo real y ejercitan un ciclo encolado durante la transacción. La candidata aún requiere publicación y aceptación nativa/remota; las pruebas locales no certifican el estado de ningún servidor.
+
+# 4.0.0-rc28 — candidata: I/O privilegiado y salud sin falsos heartbeats inactivos
+
+La migración explícita --essential-monitoring acepta las bases oficiales rc26 observer-v4 y rc27 esencial con sonda. Conserva los artefactos anteriores, fuente, credencial, buffers, offsets y unidades del transporte/observador. El colector root ya existente lee I/O cada 300 s y emite los cuatro contadores disk_* de Vector 0.60; Vector conserva red cada 300 s y deja de leer disk. No cambia permisos del kernel, capacidades ni el usuario del transporte. Preflight exige muestras nativas del parser y el primer ciclo real instalado debe confirmar I/O; cualquier fallo revierte sin retroceder cursores. Un segundo vector.service activo bloquea la migración y nunca se inicia automáticamente.
+
+Identidad separa servicios, liveness y componentes degradados. El heartbeat válido no desaparece cuando LVE falla. status global, marcador local y métrica de fallos son coherentes; se conservan los datos de componentes sanos. El marcador incluye boot_id para no aceptar señal del arranque anterior. Los fallos de comandos conservan códigos y categorías fijas, sin salida cruda ni argumentos privados. Se mantiene diagnóstico temporal y el resto de frecuencias esenciales.
+
+Pruebas sintéticas cubren fallos/permisos/recuperación, reinicio, no replay, ventanas, migración de ambas bases y rollback conservando cursores. La candidata requiere aceptación nativa/remota del piloto; no se considera desplegada ni aceptada por aprobar las pruebas locales.
+
+# 4.0.0-rc27 — candidata: monitoreo esencial explícito desde rc26
+
+Incorpora --essential-monitoring para preflight/upgrade de observer-v4 rc26 con almacenamiento validado. No modifica los artefactos anteriores ni referencias legacy. La opción retira filesystem de Vector, separa red/I/O a 300 s y filtra memoria sin consumidores. Mantiene CPU/RAM/carga y salud global cada 60 s.
+
+El ciclo esencial no invoca accesos, procesos por usuario, cloudlinux-top o lectores WordPress de forma rutinaria. Reemplaza el muestreo general de cuentas por una consulta histórica cerrada de 900 s con un minuto de margen. El filtro remoto por fallos se verifica nuevamente por recurso con umbral estricto mayor que 10; no suma fallos distintos ni selecciona por porcentaje. Sólo exporta logs de cuentas afectadas y salud global. El inventario emite recuentos cada 43200 s y cachea el mapa con invalidación por metadatos.
+
+Los diagnósticos de cuenta exacta tienen lectores explícitos y vencimiento máximo 60 min. WordPress requiere rutas/sandbox previamente aprobados; no abre nuevos docroots. La migración valida schema histórico, cobertura real de volúmenes y Vector nativo, conserva transporte/cursores, exige un ciclo nuevo con marcador de política y revierte ante fallo. Los endpoints temporales, disponibilidad/semántica de fault counters y costo real deben verificarse en el servidor antes de aceptar el piloto.
+
+Los dashboards distinguen monitoreo esencial del anterior y dejan de interpretar datos retirados como fallos. No se activa ni instala en un servidor al publicar la candidata. No se garantiza ahorro antes de la comparación remota.
+
+# 4.0.0-rc26 — candidata: etiqueta real del ciclo y control de empaquetado
+
+Corrige el rechazo de actualización observer-v4 de rc25. Su colector ejecutaba el reparto nuevo pero escribía COLLECTOR_RELEASE rc21 en el marcador; verify_new_observer_cycle exigía la versión candidata y la transacción revertía la actualización. rc26 alinea ambas versiones, sin relajar la comprobación de versión, frescura, inicio del ciclo ni componentes fallidos. Mantiene el reparto de accesos y sus límites.
+
+El builder rechaza un marcador de versión ausente o distinto del instalador. La nueva integración extrae el colector del payload distribuido, ejecuta main con inventario/probes sintéticos, escribe spool/estado/marcador reales y llama al verificador de upgrade. Reproduce el fallo con el artefacto rc25 congelado y verifica el payload actual. No fabrica un JSON con la versión esperada. Los artefactos anteriores, la agrupación rc24 y las referencias legacy quedan intactos. No usar rc25 para observer-v4 ni forzar una instalación tras rollback incompleto. Candidata pendiente de aceptación remota.
+
+# 4.0.0-rc25 — candidata: presupuesto de accesos por demanda
+
+El reparto anterior podía omitir parte de un domlog grande aun cuando el tráfico conjunto cabía holgadamente en el presupuesto. rc25 calcula cuotas por bytes pendientes: satisface primero las colas pequeñas y reparte lo restante entre las grandes. Conserva 8 MiB por ciclo, 2 MiB por archivo, rotación de prioridad, una apertura por archivo, cadencias, parser y estado. El crecimiento tras el descubrimiento aprovecha capacidad libre y puede compartir la reserva de forma acotada, conservando lectura para archivos activos conocidos.
+
+Dos nuevas métricas agregadas por host muestran bytes leídos y el máximo backlog observado por archivo. No exportan rutas ni contenido. La cobertura sigue siendo parcial ante rotaciones, inicialización, errores de formato, archivos inaccesibles o límites reales. No recupera datos omitidos ni retrocede cursores.
+
+La regresión sintética de un archivo con más tráfico y mil pequeños falla con el colector rc21 publicado y pasa con rc25; verifica lectura completa dentro del presupuesto, offsets finales y ausencia de replay. También se verifican exceso real de presupuesto, equidad, límite por archivo, crecimiento concurrente y una apertura por archivo. Admite rc24 con hashes del payload original; mantiene las rutas previas y su reversión. La agrupación rc24, las referencias legacy y los artefactos anteriores quedan intactos. Candidata pendiente de aceptación remota y comparación del consumo en piloto.
+
+# 4.0.0-rc24 — candidata: grupos acotados por fecha original
+
+Corrige la agrupación opcional minimal-v4: los temporizadores de llegada de rc21–rc23 no garantizaban una distancia máxima de 300 segundos entre fechas originales. rc24 agrupa además por ventana fija UTC de cinco minutos calculada desde la fecha original. Conserva precisión de microsegundos y cantidades; cada resumen abarca menos de 300 segundos. Una llegada tardía puede emitir otro resumen para una ventana anterior: sumar occurrences, no contar filas. La clave interna se elimina antes de enviar. El tiempo de recepción sigue sujeto a los temporizadores y al transporte.
+
+Sólo LSAPI abort y SQL Commands out of sync no críticos se agrupan. Críticos, otros errores y fechas no interpretadas pasan íntegros. No elimina lectores ni agrega sondeos, cron o contexto cPanel. No modifica filtros, fuentes, credenciales, métricas, buffers ni checkpoints. Los resúmenes siguen teniendo estado en memoria, sin garantía de auditoría y sin corregir la causa de aplicación.
+
+La migración explícita --aggregate-errors reconoce el payload y el grafo originales rc23 además de rc21/rc22; rechaza drift. Reinicia únicamente Vector. Las pruebas nativas del lector completo verifican ráfagas tardías, orden alterado, offsets UTC, bordes exactos con microsegundos, conteos, rutas críticas y cierre del temporizador con la entrada abierta. El caso de borde falla contra el grafo rc23 congelado. Pruebas de migración y reversión preservan configuración ajena, permisos y cursores. Los artefactos previos quedan inmutables. Candidata pendiente de aceptación remota.
+
+# 4.0.0-rc23 — candidata: fechas nativas del lector y conteos completos
+
+Sustituye la agrupación opcional rc22. La normalización heredada entrega dt como timestamp nativo de VRL. rc22 sólo probaba fechas JSON en texto: su aserción string!(.dt) abortaba el remap y el evento original continuaba hacia reduce, sin occurrences ni first_seen/last_seen. Las métricas del host y los lectores seguían funcionando, pero no debía considerarse validada esa agrupación.
+
+rc23 serializa tanto timestamps VRL como fechas en texto con to_string antes de parsearlos y reducir enteros de microsegundos. Conserva conteos y dt/first_seen/last_seen exactos. Si el lector marca timestamp_unparsed, el evento pasa completo, sin convertir la fecha de observación en una fecha original. Los críticos mantienen su ruta completa.
+
+La prueba nativa recorre ahora normalize_errors → useful_errors → agrupación con el parser y filtro originales. Verifica eventos LSAPI y SQL sintéticos, timestamps VRL reales, fechas en texto, offsets UTC, orden alterado, conteos, precisión de microsegundos, bypass crítico y fechas no interpretadas; rechaza advertencias de mapping/reduce. La prueba rc22 anterior con fechas convertidas a timestamp reproduce el fallo antes de la corrección.
+
+Admite migración explícita desde los artefactos originales rc21 y rc22 mediante `preflight --aggregate-errors`, `upgrade --aggregate-errors` y `verify`. Comprueba el runtime, las configuraciones congeladas y la integridad antes de reemplazar el grafo. Conserva fuentes, lectores, métricas, credenciales, permisos, propietarios, buffers y cursores. Reinicia únicamente Vector para aplicar el ajuste; la transacción de reversión se prueba con el payload rc22 original.
+
+No usar la agrupación rc22 para nuevas instalaciones. Las releases anteriores permanecen inmutables. Los observer-v4 sin agrupación opcional pueden permanecer en rc21. No reconstruye conteos o fechas ausentes en resúmenes históricos. Candidata pendiente de aceptación remota tras instalarla.
+
+# 4.0.0-rc22 — candidata: fechas originales en resúmenes de errores
+
+Corrige la agrupación opcional de rc21 para el transporte heredado minimal-v4. Vector reduce sólo acepta números en min/max; rc21 descartaba dt, first_seen y last_seen al recibir fechas ISO como texto. Los conteos se conservaban, pero Better Stack usaba una fecha de recepción en lugar de la fecha original.
+
+rc22 convierte las fechas a enteros de microsegundos antes de reducir y reconstruye dt/first_seen/last_seen en UTC después. dt corresponde al primer evento. Conserva el conteo, separación por sitio/tipo/gravedad y cierre de hasta300s. Soporta eventos fuera de orden y distintas zonas horarias. Fechas inválidas o ausentes pasan por la ruta completa sin agrupar; no se inventan fechas originales. Los críticos y demás eventos siguen pasando completos.
+
+`preflight --aggregate-errors` y `upgrade --aggregate-errors` reconocen el artefacto original rc21, verifican su runtime, configuración exacta e integridad y sustituyen sólo el grafo de agrupación revisado. Conservan fuentes, lectores, credenciales, métricas, data_dir, buffers y cursores. Reinician únicamente Vector para aplicar el grafo; hay respaldo/reversión de configuración y unidades. Los grupos aún en memoria no son un registro de auditoría. No se recuperan fechas ya descartadas por resúmenes antiguos.
+
+La actualización sin esa opción conserva el grafo heredado existente; no activar la agrupación implícitamente. Los servidores observer-v4 en rc21 no necesitan esta corrección. rc21 y todas las releases anteriores permanecen inmutables.
+
+Pruebas nativas de Vector0.60.0 verifican fechas exactas y precisión de microsegundos, entrada fuera de orden/offsets UTC, conteos, sitios separados, cierre por temporizador con entrada abierta, bypass crítico/fechas inválidas y ausencia de advertencias de combinación. Las pruebas con el payload rc21 original verifican migración explícita, preservación de permisos/propietarios/métricas/cursores, rechazo de drift y reversión ante fallo de transporte. Candidata pendiente de aceptación remota en destino.
+
 # 4.0.0-rc19 — candidata: perfiles conservados por actualizaciones antiguas
 
 Corrige el rechazo observer_profile_version_mismatch de rc18 al revisar una instalación rc6/rc7 que conserva un perfil anterior. Las actualizaciones oficiales rc4..rc7 reemplazaban identidad/mantenimiento, pero no reescribían el perfil del recolector. La versión instalada y la del perfil podían diferir legítimamente.

@@ -21,6 +21,7 @@ import time
 
 from capabilities import VERSION, SCHEMA, detect, parse_json, run, trusted_executable, validate_target
 import identity
+import health
 import context_cleanup
 
 HERE = Path(__file__).resolve().parent
@@ -216,7 +217,13 @@ def restore(record):
             errors.append(str(error))
     for service in record['services']:
         try:
-            run(['systemctl', 'stop', service])
+            # Match execute()'s service-operation budget. The probe default is
+            # only 20 s, shorter than the reviewed transport's 30 s stop window.
+            result = run(['systemctl', 'stop', service], timeout=120)
+            if result.returncode:
+                loaded = run(['systemctl', 'show', service, '-p', 'LoadState', '--value'])
+                if loaded.stdout.strip() != 'not-found':
+                    errors.append('restore_stop_failed:' + service + ':exit=' + str(result.returncode))
         except Exception:
             errors.append('restore_stop_failed:' + service)
     for path, item in record['files'].items():
@@ -425,9 +432,17 @@ WantedBy=timers.target
         'services': services + [NAME + '.timer'], 'oneshots': oneshots,
         'vector_binary': vector, 'critical_paths': critical, 'baseline': identity.snapshot(critical, str(config))}
     if pipeline_variant == 'observer-v4' and (CLOUD / 'collector.py').read_bytes() == (HERE / 'collector.py').read_bytes():
-        meta['resource_sampling'] = {'processes_seconds': 300, 'lve_seconds': 300}
+        meta['resource_sampling'] = ({'processes_seconds': None, 'lve_seconds': 900, 'history_only': True, 'access_default': False, 'inventory_seconds': 43200, **({'disk_io_seconds': 300} if load(profile_path).get('disk_io_observer') else {})}
+            if load(profile_path).get('monitoring_policy') == 'essential-v1' else {'processes_seconds': 300, 'lve_seconds': 300})
+        meta['monitoring_policy'] = load(profile_path).get('monitoring_policy', 'observer-v4')
     if storage_enabled:
         meta['storage_observer'] = True
+    if (migration_review or {}).get('essential_host_sampling'):
+        import legacy_essential
+        if migration_review['essential_host_sampling'] != legacy_essential.MARKER:
+            raise RuntimeError('legacy_essential:unknown_review_marker')
+        meta['monitoring_policy'] = legacy_essential.POLICY
+        meta['resource_sampling'] = dict(legacy_essential.SAMPLING)
     try:
         if migration_review:
             meta['migration_review'] = migration_review
@@ -628,7 +643,13 @@ def validate_v4_upgrade(target, caps):
                          '4.0.0-rc7': 'upgrade_rc7.json', '4.0.0-rc12': 'upgrade_rc12.json',
                          '4.0.0-rc13': 'upgrade_rc13.json', '4.0.0-rc15': 'upgrade_rc15.json',
                          '4.0.0-rc10': 'upgrade_rc10.json', '4.0.0-rc17': 'upgrade_rc17.json',
-                         '4.0.0-rc18': 'upgrade_rc18.json', '4.0.0-rc19': 'upgrade_rc19.json', '4.0.0-rc20': 'upgrade_rc20.json'}
+                         '4.0.0-rc18': 'upgrade_rc18.json', '4.0.0-rc19': 'upgrade_rc19.json', '4.0.0-rc20': 'upgrade_rc20.json', '4.0.0-rc21': 'upgrade_rc21.json', '4.0.0-rc22': 'upgrade_rc22.json', '4.0.0-rc23': 'upgrade_rc23.json', '4.0.0-rc24': 'upgrade_rc24.json', '4.0.0-rc26': 'upgrade_rc26.json', '4.0.0-rc27': 'upgrade_rc27.json'}
+    reviewed_versions['4.0.0-rc28'] = 'upgrade_rc28.json'
+    reviewed_versions['4.0.0-rc29'] = 'upgrade_rc29.json'
+    reviewed_versions['4.0.0-rc30'] = 'upgrade_rc30.json'
+    reviewed_versions['4.0.0-rc31'] = 'upgrade_rc31.json'
+    reviewed_versions['4.0.0-rc32'] = 'upgrade_rc32.json'
+    reviewed_versions['4.0.0-rc33'] = 'upgrade_rc33.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -645,7 +666,8 @@ def validate_v4_upgrade(target, caps):
         import legacy_upgrade
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20')
+    had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
+    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -729,7 +751,8 @@ def upgrade_v4(target, caps):
     identity.status(quiet=True)  # Must be healthy before any write or service change.
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
-    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20')
+    refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
@@ -743,6 +766,9 @@ def upgrade_v4(target, caps):
     try:
         execute(['systemctl', 'stop', *services])
         if refresh_observer:
+            # Stopping a timer does not finish an already queued oneshot. Let
+            # that job acquire its own nonblocking lock before we acquire it.
+            wait_observer_inactive()
             with observer_quiet_point():
                 if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
                     raise RuntimeError('upgrade:v4_changed_while_waiting')
@@ -862,7 +888,7 @@ def validate_current(target, caps):
     for path in runtime_files():
         if identity.read(path) != (HERE / path.name).read_bytes():
             raise RuntimeError('upgrade:current_runtime_differs_from_release')
-    if meta.get('resource_sampling'):
+    if meta.get('resource_sampling') and meta.get('pipeline_variant') == 'observer-v4':
         if identity.read(CLOUD / 'collector.py') != (HERE / 'collector.py').read_bytes():
             raise RuntimeError('upgrade:current_collector_differs_from_release')
     return identity.status(quiet=True)
@@ -916,7 +942,7 @@ def create_credential(target, path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('operation', choices=['preflight', 'install', 'upgrade', 'verify', 'status', 'rollback', 'resume', 'configure', 'credential', 'storage-preflight'])
+    p.add_argument('operation', choices=['preflight', 'install', 'upgrade', 'verify', 'status', 'rollback', 'resume', 'configure', 'credential', 'storage-preflight', 'diagnostic-enable', 'diagnostic-disable', 'diagnostic-status', 'maintenance-check'])
     p.add_argument('--target', type=Path, help='Perfil; en upgrade/preflight se usa el destino instalado si se omite')
     p.add_argument('--host')
     p.add_argument('--server-ip')
@@ -930,7 +956,15 @@ def main():
     p.add_argument('--simplify-context', action='store_true',
                    help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
     p.add_argument('--aggregate-errors', action='store_true', help='Agrupar errores repetidos sólo en la base minimal-v4 revisada')
+    p.add_argument('--essential-monitoring', action='store_true', help='Monitoreo esencial explícito sobre observer-v4 o transportes AlmaLinux revisados')
+    p.add_argument('--user', help='Cuenta exacta del diagnóstico temporal')
+    p.add_argument('--minutes', type=int, default=30)
+    p.add_argument('--readers', nargs='+', choices=['access', 'lve', 'processes', 'wordpress'])
     args = p.parse_args()
+    if (args.user or args.readers or args.minutes != 30) and not args.operation.startswith('diagnostic-'):
+        p.error('--user/--readers/--minutes sólo se usan con diagnóstico explícito')
+    if args.essential_monitoring and (args.operation not in ('preflight', 'upgrade') or args.aggregate_errors or args.simplify_context or args.recover_partial or args.recover_bootstrap):
+        p.error('--essential-monitoring sólo admite preflight/upgrade sin otras migraciones')
     if args.aggregate_errors and (args.operation not in ('preflight', 'upgrade') or args.simplify_context or args.recover_partial or args.recover_bootstrap):
         p.error('--aggregate-errors sólo admite preflight/upgrade sin otras migraciones')
     if args.recover_bootstrap and (args.operation not in ('preflight', 'resume') or args.recover_partial or args.simplify_context):
@@ -946,6 +980,13 @@ def main():
     os.umask(0o077)
     lock = os.open('/run/duplika-betterstack-v4.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if args.operation == 'maintenance-check':
+        print(json.dumps(dict(health.probe_litespeed(identity.read), reboot=health.observe()), indent=2))
+        return
+    if args.operation.startswith('diagnostic-'):
+        import essential_upgrade
+        essential_upgrade.diagnostic(sys.modules[__name__], args)
+        return
     if args.operation == 'storage-preflight':
         if not args.host or args.host not in (socket.gethostname(), socket.getfqdn()):
             raise RuntimeError('storage:explicit_hostname_mismatch')
@@ -977,6 +1018,12 @@ def main():
         args.target = args.target or Path('/root/perfil.json')
         target = load(args.target)
     caps = secure_target(target)
+    if args.essential_monitoring:
+        import essential_upgrade
+        essential_upgrade.migrate(sys.modules[__name__], target, caps, apply=args.operation == 'upgrade')
+        if args.operation == 'upgrade':
+            request_publication(target)
+        return
     if args.aggregate_errors:
         import error_aggregation
         if not (BASE / 'complete').exists():
