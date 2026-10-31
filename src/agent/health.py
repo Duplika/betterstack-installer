@@ -36,7 +36,7 @@ def observe(runner=run, finder=trusted_executable):
     return result
 
 
-MAINTENANCE_SCHEMA = 3
+MAINTENANCE_SCHEMA = 4
 
 
 # Daily, read-only LiteSpeed maintenance. No vendor shell scripts are executed.
@@ -130,18 +130,38 @@ def vendor_release(home):
         os.close(directory)
 
 
-def ea_ini_text(path, base, reader):
-    """Allow root-owned EA4 INI links only inside this same PHP runtime."""
+def ea_ini_text(path, base):
+    """Read EA4 INI as data; allow group-write only on a root:root file.
+
+    Never pass these INI to PHP. Executables/modules and all directory paths
+    retain the strict root-only, no group/world-write trust policy.
+    """
     import os
+    import stat
     for item in (path, *path.parents):
         info = item.lstat()
-        if info.st_uid != 0 or (not item.is_symlink() and info.st_mode & 0o022):
+        regular_data = item == path and stat.S_ISREG(info.st_mode)
+        forbidden = 0o002 if regular_data and info.st_gid == 0 else 0o022
+        if info.st_uid != 0 or (not item.is_symlink() and info.st_mode & forbidden):
             raise ValueError('ini_path_untrusted')
     resolved = path.resolve(strict=True)
     resolved.relative_to(base.resolve(strict=True))
-    value = reader(resolved)
-    if len(value) > 262144:
-        raise ValueError('ini_limit')
+    for item in resolved.parents:
+        info = item.lstat()
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            raise ValueError('ini_parent_untrusted')
+    fd = os.open(str(resolved), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        forbidden = 0o002 if info.st_gid == 0 else 0o022
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or
+                info.st_mode & forbidden or info.st_size > 262144):
+            raise ValueError('ini_file_untrusted')
+        value = os.read(fd, 262145)
+        if len(value) > 262144:
+            raise ValueError('ini_limit')
+    finally:
+        os.close(fd)
     # Comments need not be ASCII. Only ASCII extension declarations are matched.
     return value.decode('utf-8', errors='replace')
 
@@ -188,7 +208,7 @@ def timezone_observations(reader, fetch=catalog_text, finder=trusted_executable,
             for ini in ini_paths:
                 if not ini.exists():
                     continue
-                text = ea_ini_text(ini, base, reader)
+                text = ea_ini_text(ini, base)
                 for line in text.splitlines():
                     match = re.fullmatch(r'\s*extension\s*=\s*[\"\']?([^\"\';\s]+)[\"\']?\s*(?:;.*)?', line, re.I)
                     if match and match[1] in ('timezonedb', 'timezonedb.so', str(module)):

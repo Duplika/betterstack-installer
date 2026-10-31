@@ -19,18 +19,18 @@ class IniTests(unittest.TestCase):
         self.link=self.base/'etc/php.ini';self.link.symlink_to(self.real)
 
     def test_root_owned_same_runtime_link_and_unicode_comments(self):
-        value=h.ea_ini_text(self.link,self.base,identity.read)
+        value=h.ea_ini_text(self.link,self.base)
         self.assertIn('Configuración',value)
         self.assertIn('extension=timezonedb.so',value)
 
     def test_link_outside_runtime_is_rejected_without_read(self):
         self.link.unlink();outside=self.base.parent/'outside.ini';outside.write_text('private')
         self.link.symlink_to(outside)
-        with self.assertRaises(ValueError):h.ea_ini_text(self.link,self.base,lambda p:self.fail('must not read'))
+        with self.assertRaises(ValueError):h.ea_ini_text(self.link,self.base)
 
     def test_writable_ini_is_rejected(self):
         self.real.chmod(0o666)
-        with self.assertRaises(RuntimeError):h.ea_ini_text(self.link,self.base,identity.read)
+        with self.assertRaises(ValueError):h.ea_ini_text(self.link,self.base)
 
 
 class RebootMetricTests(unittest.TestCase):

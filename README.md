@@ -1,6 +1,6 @@
-# Better Stack installer — candidata rc33
+# Better Stack installer — candidata rc34
 
-Monitoreo esencial para servidores cPanel con una migración explícita desde **observer-v4 rc26 completo o rc27/rc28/rc29 esencial, con sonda de almacenamiento**, y ajuste de host para los dos transportes AlmaLinux WordPress revisados. rc33 es candidata: no implica aceptación remota ni promoción a estable. Los artefactos previos y las referencias legacy se conservan intactos.
+Monitoreo esencial para servidores cPanel con una migración explícita desde **observer-v4 rc26 completo o rc27/rc28/rc29 esencial, con sonda de almacenamiento**, y ajuste de host para los dos transportes AlmaLinux WordPress revisados. rc34 es candidata: no implica aceptación remota ni promoción a estable. Los artefactos previos y las referencias legacy se conservan intactos.
 
 rc28 mueve la lectura de I/O a su colector root ya existente, sin elevar privilegios de Vector ni cambiar protecciones del sistema. Separa la frescura del heartbeat de los componentes degradados y conserva diagnósticos de comandos clasificados, sin salida privada.
 
@@ -167,3 +167,13 @@ runtime; comentarios UTF-8 no se consideran fallo. Conserva PHP -n y no ejecuta
 los INI ni aplicaciones. Errores por versión PHP identifican la etapa y categoría
 fija. Esquema de caché nuevo para repetir resultados previos al actualizar.
 Candidata: requiere piloto nativo, verificación del sandbox y recepción remota.
+
+### rc34: INI root:root con escritura de grupo
+
+Admite INI regulares root:root con modo 0664 como datos; mantiene rechazo de
+escritura para otros, escritura de otros grupos, propietarios no root, rutas
+fuera del runtime y directorios inseguros. Lee como máximo 256 KiB mediante
+descriptor O_NOFOLLOW/O_NONBLOCK. Nunca carga ese INI en PHP (-n). La confianza
+de binarios, módulos, credenciales e integridad no cambia; no corrige permisos.
+Renueva el esquema de caché para repetir el resultado al actualizar. Candidata
+pendiente de repetir el piloto; los artefactos rc33 permanecen inmutables.

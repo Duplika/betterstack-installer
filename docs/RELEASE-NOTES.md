@@ -1,3 +1,12 @@
+# 4.0.0-rc34 — candidata: INI EA4 root:root 0664 como datos
+
+Lector específico que admite escritura del grupo root sólo en un archivo INI
+regular propiedad de root:root. Rechaza otros propietarios/grupos escritores,
+escritura para otros, archivos especiales, directorios inseguros y destinos
+fuera del runtime. Lectura acotada por descriptor sin seguir el enlace final.
+No modifica permisos ni carga INI en PHP; módulos/binarios conservan controles
+root estrictos. Renueva la caché y congela hashes rc33. Requiere piloto nativo.
+
 # 4.0.0-rc33 — candidata: reinicio recomendado en mantenimiento
 
 Expone como métrica la observación local de reinicio ya existente, sin agregar
