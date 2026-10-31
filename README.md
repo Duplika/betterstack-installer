@@ -96,3 +96,46 @@ python3 scripts/check_vector.py --vector /ruta/vector
 ```
 
 Pruebas sintéticas, build reproducible y Vector nativo no sustituyen aceptación del servidor. Configuración, inventarios, logs y credenciales reales permanecen fuera del repositorio público.
+
+## rc31: mantenimiento diario de LiteSpeed (candidata)
+
+Sólo en instalaciones LiteSpeed Enterprise detectadas por su binario y metadatos,
+consulta el catálogo oficial STABLE (versión y build) y la versión estable PECL de
+timezonedb para los PHP EasyApache presentes. No ejecuta lsup/update/buildtimezone,
+compila módulos, cambia INI/CageFS ni reinicia servicios. OpenLiteSpeed y otras
+ediciones no se interpretan como Enterprise. Una instalación ausente no dispara
+consultas de red ni procesos PHP. La detección soporta LSWS_HOME.config validado.
+
+La identidad horaria reutiliza un resultado privado por 86400 segundos, también
+si la consulta falla. Sólo se consulta al publicar, nunca en verify/preflight.
+Los dos catálogos usan HTTPS sin redirecciones/proxy/curlrc, 6 s y 16 KiB por
+respuesta. Máximo 12 runtimes EA4, cada sonda PHP con 3 s; usa -n y carga sólo el
+módulo root validado, sin configuración PHP ni código de sitios. La habilitación
+se comprueba en los INI globales EA4 conocidos; no acredita el estado de workers
+y sitios en ejecución ni rutas de configuración personalizadas. Permisos,
+versiones o respuestas desconocidas producen estado desconocido, nunca saludable.
+
+El resultado distingue versión/build nuevo, instalado por delante del canal
+estable (sin recomendar downgrade), extensión ausente/deshabilitada y fallos.
+No se usa autoupdate/build como catálogo fresco. BUILD.VERSION tiene prioridad
+sobre BUILD. No se compara con candidatos ni se promete detectar builds que
+LiteSpeed no haya promovido a su canal STABLE.
+
+Las métricas diarias conservan la fecha original de observación y reintentan
+entrega sin repetir la consulta. Nombres: duplika_litespeed_update_state,
+duplika_timezonedb_update_state y duplika_timezonedb_php_update_state. Valores:
+-2 no aplicable, -1 desconocido, 0 sin actualización pendiente, 1 actualización,
+2 extensión faltante. Etiquetas incluyen status y versiones; PHP sólo en la
+métrica por runtime. Una consulta con más de 36 h debe mostrarse vencida, nunca
+como actual. No se agregan alertas de paging por mantenimiento rutinario.
+
+Prueba puntual, sin fuente/credencial ni instalación del agente:
+
+```bash
+bash /root/installer.sh maintenance-check
+```
+
+Tras revisar la salida y los costos nativos, una base v4 rc30 íntegra admite
+preflight/upgrade/verify normales; conserva la política esencial ya elegida,
+transporte, credenciales, buffers y offsets. Publicar la candidata no la instala.
+Se requiere piloto y aceptación remota antes de extender a la flota.

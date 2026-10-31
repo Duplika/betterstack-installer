@@ -1,3 +1,14 @@
+# 4.0.0-rc31 — candidata: mantenimiento LiteSpeed diario y sólo donde aplica
+
+Comprobación de STABLE (versión/build) y timezonedb EA4 en identidad, con caché
+diaria de intentos, límites de tiempo/salida, detección previa y estados de error
+explícitos. PHP usa -n sin INI ni sitios; configuración EA4 se lee de forma
+acotada para detectar extensión no habilitada. No ejecuta scripts de actualización.
+Métricas directas diarias con fecha de observación y recibo de entrega independiente.
+Prueba maintenance-check sin instalar ni publicar telemetría. Conserva muestreo,
+servicios de transporte, fuentes y cursores. Admite base rc30 congelada con hashes.
+Pruebas offline no acreditan compatibilidad ni recepción nativas; requiere piloto.
+
 # 4.0.0-rc30 — candidata: muestreo de host liviano sin perder errores WordPress
 
 Agrega una selección explícita --essential-monitoring para los dos layouts heredados AlmaLinux WordPress revisados. Conserva lectores incrementales, filtros/agregaciones WordPress/PHP/WooCommerce, fuente, credencial, perfil, unidades, usuario, data_dir, buffers y offsets. CPU/RAM esencial/carga/host/filesystem siguen a 60 s; disk/network pasan a 300 s. No instala sonda root/SMART, ejecuta WordPress ni consulta SQL; la política se identifica como essential-host-v1.

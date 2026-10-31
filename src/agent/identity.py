@@ -172,6 +172,7 @@ def status(publish=False, quiet=False):
     version = health.run([meta['vector_binary'], '--version'])
     vector_version = version.stdout.strip()[:160] if version.returncode == 0 else 'unknown'
     maintenance = health.observe()
+    ls_record = health.daily_litespeed(STATE, read, atomic, time.time(), online=publish and not drift)
     event = {'dt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'event_kind': 'collector_identity',
         'host': meta['target']['host'], 'server_ip': meta['target']['server_ip'],
         'source_id': meta['target']['source_id'],
@@ -184,7 +185,7 @@ def status(publish=False, quiet=False):
         'services_healthy': all(services.values()),
         'inactive_services': [k for k, v in services.items() if not v],
         'failed_health_checks': [k for k, v in checks.items() if not v],
-        'maintenance': maintenance, 'metrics_delivery_verified': False,
+        'maintenance': maintenance, 'litespeed_maintenance': ls_record, 'metrics_delivery_verified': False,
         'release_channel': 'candidate', 'remote_acceptance': 'external_evidence_required'}
     event['collector_healthy'] = (all(services.values()) and all(checks.values())
                                   and (observer is None or observer['status'] == 'ok'))
@@ -205,6 +206,15 @@ def status(publish=False, quiet=False):
     if time.time() - old.get('inventory_at', 0) >= 86400:
         event['inventory_daily'] = True
     due = status_digest != old.get('status_digest') or event.get('inventory_daily', False)
+    # Daily metrics use their observation timestamp, never a renewed cached time.
+    # Delivery acknowledgement is separate from the probe cache: retry on network failure.
+    if publish and ls_record.get('checked_at') is not None:
+        receipt = STATE / 'maintenance-metrics-send.json'
+        sent = json.loads(read(receipt)) if receipt.exists() else {}
+        if sent.get('checked_at') != ls_record['checked_at']:
+            metrics = health.maintenance_metrics(ls_record, meta['target'])
+            send(uri + 'metrics', token, metrics)
+            atomic(receipt, {'checked_at': ls_record['checked_at']})
     if publish and due:
         send(uri, token, event)
         atomic(STATE / 'last-send.json', {'integrity_digest': digest,

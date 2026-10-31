@@ -57,12 +57,12 @@ def storage_coverage(api):
 
 def plan(api, target, caps):
     old = api.validate_v4_upgrade(target, caps)
-    if old.get('agent_version') not in ('4.0.0-rc26', '4.0.0-rc27', '4.0.0-rc28', '4.0.0-rc29') or old.get('pipeline_variant') != 'observer-v4' or not old.get('storage_observer'):
+    if old.get('agent_version') not in ('4.0.0-rc26', '4.0.0-rc27', '4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30') or old.get('pipeline_variant') != 'observer-v4' or not old.get('storage_observer'):
         raise RuntimeError('essential:requires_complete_reviewed_observer_with_storage')
     api.identity.status(quiet=True)
     profile = api.load(api.CLOUD / 'profile.json')
     expected_policy = None if old['agent_version'] == '4.0.0-rc26' else collector.ESSENTIAL_POLICY
-    expected_disk = old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29')
+    expected_disk = old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30')
     disk_matches = profile.get('disk_io_observer') is True if expected_disk else not profile.get('disk_io_observer')
     if profile.get('monitoring_policy') != expected_policy or not disk_matches:
         raise RuntimeError('essential:unexpected_existing_policy')

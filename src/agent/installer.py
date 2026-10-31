@@ -21,6 +21,7 @@ import time
 
 from capabilities import VERSION, SCHEMA, detect, parse_json, run, trusted_executable, validate_target
 import identity
+import health
 import context_cleanup
 
 HERE = Path(__file__).resolve().parent
@@ -645,6 +646,7 @@ def validate_v4_upgrade(target, caps):
                          '4.0.0-rc18': 'upgrade_rc18.json', '4.0.0-rc19': 'upgrade_rc19.json', '4.0.0-rc20': 'upgrade_rc20.json', '4.0.0-rc21': 'upgrade_rc21.json', '4.0.0-rc22': 'upgrade_rc22.json', '4.0.0-rc23': 'upgrade_rc23.json', '4.0.0-rc24': 'upgrade_rc24.json', '4.0.0-rc26': 'upgrade_rc26.json', '4.0.0-rc27': 'upgrade_rc27.json'}
     reviewed_versions['4.0.0-rc28'] = 'upgrade_rc28.json'
     reviewed_versions['4.0.0-rc29'] = 'upgrade_rc29.json'
+    reviewed_versions['4.0.0-rc30'] = 'upgrade_rc30.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -662,7 +664,7 @@ def validate_v4_upgrade(target, caps):
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29')
+    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -747,7 +749,7 @@ def upgrade_v4(target, caps):
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
@@ -937,7 +939,7 @@ def create_credential(target, path):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('operation', choices=['preflight', 'install', 'upgrade', 'verify', 'status', 'rollback', 'resume', 'configure', 'credential', 'storage-preflight', 'diagnostic-enable', 'diagnostic-disable', 'diagnostic-status'])
+    p.add_argument('operation', choices=['preflight', 'install', 'upgrade', 'verify', 'status', 'rollback', 'resume', 'configure', 'credential', 'storage-preflight', 'diagnostic-enable', 'diagnostic-disable', 'diagnostic-status', 'maintenance-check'])
     p.add_argument('--target', type=Path, help='Perfil; en upgrade/preflight se usa el destino instalado si se omite')
     p.add_argument('--host')
     p.add_argument('--server-ip')
@@ -975,6 +977,9 @@ def main():
     os.umask(0o077)
     lock = os.open('/run/duplika-betterstack-v4.lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if args.operation == 'maintenance-check':
+        print(json.dumps(health.probe_litespeed(identity.read), indent=2))
+        return
     if args.operation.startswith('diagnostic-'):
         import essential_upgrade
         essential_upgrade.diagnostic(sys.modules[__name__], args)
