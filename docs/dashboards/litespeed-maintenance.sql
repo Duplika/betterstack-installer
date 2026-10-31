@@ -12,7 +12,7 @@ WITH points AS (
     maxMerge(value_max) AS state
   FROM {{source}}
   WHERE dt >= {{end_time}} - INTERVAL 7 DAY AND dt < {{end_time}}
-    AND name IN ('duplika_litespeed_update_state', 'duplika_timezonedb_update_state', 'duplika_timezonedb_php_update_state')
+    AND name IN ('duplika_litespeed_update_state', 'duplika_timezonedb_update_state', 'duplika_timezonedb_php_update_state', 'duplika_reboot_recommended')
     AND metrics_count > 0
     [[ AND match(label('host'), {{servidor}}) ]]
   GROUP BY dt, host, name, php, status, installed, installed_build, available, available_build
@@ -25,10 +25,12 @@ WITH points AS (
 )
 SELECT
   host AS Servidor,
-  multiIf(name='duplika_litespeed_update_state', 'LiteSpeed',
+  multiIf(name='duplika_reboot_recommended', 'Sistema · reinicio',
+          name='duplika_litespeed_update_state', 'LiteSpeed',
           name='duplika_timezonedb_php_update_state', concat('timezoneDB · PHP ', substring(php, 1, 1), '.', substring(php, 2)),
           'timezoneDB · resumen') AS Componente,
   multiIf(dateDiff('second', checked, {{end_time}}) > 129600, 'Comprobación vencida',
+    x.1='indicated', 'Reinicio recomendado',
     x.1='version_available', 'Versión nueva disponible',
     x.1 IN ('build_available', 'update_available'), 'Actualización disponible',
     x.1='missing', 'Extensión faltante o deshabilitada',

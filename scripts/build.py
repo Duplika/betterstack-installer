@@ -15,7 +15,7 @@ AGENT = ('upgrade_rc27.json', 'essential_upgrade.py', 'upgrade_rc26.json', 'upgr
 LEGACY = ('legacy_identity.py', 'legacy_cloud_config.py', 'legacy_cloud_collector.py',
           'legacy_alma_profile.py', 'legacy_alma_acl.py', 'legacy_context_reference.py',
           'legacy_context_acl.py', 'legacy_context_reader.py')
-AGENT = ('upgrade_rc31.json', 'upgrade_rc30.json', 'legacy_essential.py', 'upgrade_rc29.json', 'upgrade_rc28.json', *AGENT)
+AGENT = ('upgrade_rc32.json', 'upgrade_rc31.json', 'upgrade_rc30.json', 'legacy_essential.py', 'upgrade_rc29.json', 'upgrade_rc28.json', *AGENT)
 
 
 def version():

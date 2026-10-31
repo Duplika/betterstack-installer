@@ -1,6 +1,6 @@
-# Better Stack installer — candidata rc32
+# Better Stack installer — candidata rc33
 
-Monitoreo esencial para servidores cPanel con una migración explícita desde **observer-v4 rc26 completo o rc27/rc28/rc29 esencial, con sonda de almacenamiento**, y ajuste de host para los dos transportes AlmaLinux WordPress revisados. rc32 es candidata: no implica aceptación remota ni promoción a estable. Los artefactos previos y las referencias legacy se conservan intactos.
+Monitoreo esencial para servidores cPanel con una migración explícita desde **observer-v4 rc26 completo o rc27/rc28/rc29 esencial, con sonda de almacenamiento**, y ajuste de host para los dos transportes AlmaLinux WordPress revisados. rc33 es candidata: no implica aceptación remota ni promoción a estable. Los artefactos previos y las referencias legacy se conservan intactos.
 
 rc28 mueve la lectura de I/O a su colector root ya existente, sin elevar privilegios de Vector ni cambiar protecciones del sistema. Separa la frescura del heartbeat de los componentes degradados y conserva diagnósticos de comandos clasificados, sin salida privada.
 
@@ -150,3 +150,20 @@ confianza root del ejecutable, VERSION, BUILD.VERSION, PHP, módulos, INI ni del
 agente. Diagnóstico local incluye etapa y categoría fija, sin salida privada.
 Invalida la caché anterior una vez al cambiar el esquema de la sonda. Candidata
 para repetir el piloto; no se presume aceptada en servidor ni desplegada.
+
+### rc33: reinicio recomendado y diagnóstico timezoneDB
+
+El detector local needs-restarting -r existente continúa una vez por hora con
+--cacheonly, sin refrescar repositorios, con directorios temporales privados y
+límite de 20 segundos. Ahora publica duplika_reboot_recommended junto a la
+identidad sólo al cambiar o en el inventario diario: 1 recomendado, 0 no indicado,
+-1 desconocido. Aplica a todos los servidores, tengan LiteSpeed o no. Es una
+recomendación por actualizaciones, no un indicador de urgencia o evaluación de
+KernelCare; nunca reinicia ni instala paquetes si falta la herramienta. El
+chequeo puntual maintenance-check incluye el resultado de reinicio.
+
+La lectura de INI EA4 acepta enlaces sólo root, con destino dentro del mismo
+runtime; comentarios UTF-8 no se consideran fallo. Conserva PHP -n y no ejecuta
+los INI ni aplicaciones. Errores por versión PHP identifican la etapa y categoría
+fija. Esquema de caché nuevo para repetir resultados previos al actualizar.
+Candidata: requiere piloto nativo, verificación del sandbox y recepción remota.

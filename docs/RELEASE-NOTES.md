@@ -1,3 +1,13 @@
+# 4.0.0-rc33 — candidata: reinicio recomendado en mantenimiento
+
+Expone como métrica la observación local de reinicio ya existente, sin agregar
+consultas DNF. Se envía al cambiar o diariamente; estados desconocidos permanecen
+explícitos y no hay reinicios automáticos. Aplica con o sin LiteSpeed.
+INI EA4: enlaces root limitados al mismo runtime, lectura UTF-8 y diagnóstico
+por etapa de fallos timezoneDB. La sonda PHP continúa usando -n sin cargar INI.
+Renueva esquema de caché, congela hashes rc32 y conserva transporte/cursores.
+Prueba maintenance-check incluye reinicio. Requiere aceptación nativa/remota.
+
 # 4.0.0-rc32 — candidata: lectura acotada del marcador lsadm
 
 Corrige el rechazo de autoupdate/release cuando lo administra lsadm. Lector

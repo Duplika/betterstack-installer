@@ -36,6 +36,9 @@ def observe(runner=run, finder=trusted_executable):
     return result
 
 
+MAINTENANCE_SCHEMA = 3
+
+
 # Daily, read-only LiteSpeed maintenance. No vendor shell scripts are executed.
 # Keep this in the existing integrity-checked runtime so old transports do not change.
 def numeric_version(value):
@@ -127,6 +130,22 @@ def vendor_release(home):
         os.close(directory)
 
 
+def ea_ini_text(path, base, reader):
+    """Allow root-owned EA4 INI links only inside this same PHP runtime."""
+    import os
+    for item in (path, *path.parents):
+        info = item.lstat()
+        if info.st_uid != 0 or (not item.is_symlink() and info.st_mode & 0o022):
+            raise ValueError('ini_path_untrusted')
+    resolved = path.resolve(strict=True)
+    resolved.relative_to(base.resolve(strict=True))
+    value = reader(resolved)
+    if len(value) > 262144:
+        raise ValueError('ini_limit')
+    # Comments need not be ASCII. Only ASCII extension declarations are matched.
+    return value.decode('utf-8', errors='replace')
+
+
 def timezone_observations(reader, fetch=catalog_text, finder=trusted_executable,
                           runner=run, php_root=Path('/opt/cpanel')):
     """Probe only EA4 runtimes with -n; no site/config code is executed."""
@@ -146,6 +165,7 @@ def timezone_observations(reader, fetch=catalog_text, finder=trusted_executable,
     for root in roots:
         row = {'php': root.name[6:], 'status': 'unknown'}
         rows.append(row)
+        stage = 'module_security'
         try:
             base = root / 'root'
             module = base / 'usr/lib64/php/modules/timezonedb.so'
@@ -163,11 +183,12 @@ def timezone_observations(reader, fetch=catalog_text, finder=trusted_executable,
             ini_paths = [base / 'etc/php.ini', *sorted((base / 'etc/php.d').glob('*.ini'))]
             if len(ini_paths) > 128:
                 raise ValueError('ini_limit')
+            stage = 'ini_read'
             enabled = False
             for ini in ini_paths:
                 if not ini.exists():
                     continue
-                text = maintenance_text(ini, reader, limit=262144)
+                text = ea_ini_text(ini, base, reader)
                 for line in text.splitlines():
                     match = re.fullmatch(r'\s*extension\s*=\s*[\"\']?([^\"\';\s]+)[\"\']?\s*(?:;.*)?', line, re.I)
                     if match and match[1] in ('timezonedb', 'timezonedb.so', str(module)):
@@ -175,14 +196,17 @@ def timezone_observations(reader, fetch=catalog_text, finder=trusted_executable,
             if not enabled:
                 row.update(status='missing', reason='extension_not_enabled')
                 continue
+            stage = 'php_binary'
             php = finder(str(base / 'usr/bin/php'))
             if not php:
                 raise ValueError('php_untrusted')
+            stage = 'php_execution'
             response = runner([php, '-n', '-d', 'extension=' + str(module), '-r',
                 'echo extension_loaded("timezonedb") ? timezone_version_get() : "";'], timeout=3)
             installed = response.stdout.strip()
             if response.returncode or response.stderr.strip():
                 raise ValueError('php_probe_failed')
+            stage = 'version_parse'
             numeric_version(installed)
             row['installed'] = installed
             if latest is None:
@@ -190,8 +214,11 @@ def timezone_observations(reader, fetch=catalog_text, finder=trusted_executable,
             else:
                 row.update(available=latest, status='update_available' if
                     numeric_version(installed) < numeric_version(latest) else 'current')
-        except Exception:
-            row.update(status='unknown', reason='local_probe_failed')
+        except Exception as error:
+            row.update(status='unknown', reason='local_probe_failed', stage=stage,
+                failure_kind='permission_denied' if isinstance(error, PermissionError) else
+                    'missing' if isinstance(error, FileNotFoundError) else
+                    'invalid_metadata' if isinstance(error, ValueError) else 'local_probe_failed')
     statuses = {row['status'] for row in rows}
     status = next((s for s in ('missing', 'update_available', 'unknown') if s in statuses), 'current')
     return {'status': status, 'php': rows, **({'available': latest} if latest else {})}
@@ -257,7 +284,7 @@ def daily_litespeed(state, reader, writer, now, online=False):
     try:
         old = json.loads(reader(path))
         checked = old.get('checked_at')
-        valid = (old.get('probe_schema') == 2 and isinstance(checked, (int, float)) and not isinstance(checked, bool)
+        valid = (old.get('probe_schema') == MAINTENANCE_SCHEMA and isinstance(checked, (int, float)) and not isinstance(checked, bool)
                  and math.isfinite(checked) and isinstance(old.get('observation'), dict))
         if valid and 0 <= now - checked < 86400:
             return old
@@ -266,7 +293,7 @@ def daily_litespeed(state, reader, writer, now, online=False):
     if not online:
         return {'checked_at': None, 'observation': {'status': 'not_checked'}}
     observed = probe_litespeed(reader)
-    result = {'probe_schema': 2, 'checked_at': now, 'observation': observed}
+    result = {'probe_schema': MAINTENANCE_SCHEMA, 'checked_at': now, 'observation': observed}
     writer(path, result)
     return result
 
@@ -294,3 +321,14 @@ def maintenance_metrics(record, target):
         add('duplika_timezonedb_php_update_state', php['status'], {
             key: str(php.get(key, '')) for key in ('php', 'installed', 'available')})
     return rows
+
+
+def reboot_metrics(observation, target, now):
+    """A local recommendation, not security urgency or a live-patch assessment."""
+    import datetime
+    state = observation.get('reboot_status', 'unknown')
+    value = {'indicated': 1, 'not_indicated': 0}.get(state, -1)
+    return [{'dt': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat(),
+        'name': 'duplika_reboot_recommended', 'gauge': {'value': value},
+        'tags': {'host': target['host'], 'server_ip': target['server_ip'],
+                 'status': state, 'reason': observation.get('reason', 'reboot_probe_unavailable')}}]

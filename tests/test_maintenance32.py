@@ -88,5 +88,5 @@ class VendorMetadataTests(unittest.TestCase):
         with patch.object(h, 'probe_litespeed', return_value={'status':'installed'}) as probe:
             value=h.daily_litespeed(self.home,lambda p:json.dumps(old).encode(),lambda *args:written.append(args),1001,online=True)
         probe.assert_called_once()
-        self.assertEqual(value['probe_schema'],2)
+        self.assertEqual(value['probe_schema'],h.MAINTENANCE_SCHEMA)
         self.assertEqual(len(written),1)

@@ -216,6 +216,9 @@ def status(publish=False, quiet=False):
             send(uri + 'metrics', token, metrics)
             atomic(receipt, {'checked_at': ls_record['checked_at']})
     if publish and due:
+        reboot_rows = health.reboot_metrics(maintenance, meta['target'], time.time())
+        if reboot_rows:
+            send(uri + 'metrics', token, reboot_rows)
         send(uri, token, event)
         atomic(STATE / 'last-send.json', {'integrity_digest': digest,
                'status_digest': status_digest,

@@ -301,6 +301,7 @@ class IdentityDeliveryTests(unittest.TestCase):
             'installer_version':capabilities.VERSION,'agent_version':capabilities.VERSION,'pipeline_variant':'observer-v4'}
         (root/'manifest.json').write_text(json.dumps(meta))
         self.stack.enter_context(patch.object(identity.health, 'daily_litespeed', return_value={'checked_at': None, 'observation': {'status': 'not_checked'}}))
+        self.stack.enter_context(patch.object(identity.health, 'reboot_metrics', return_value=[]))
         self.last=root/'last-send.json'
         self.clock=self.stack.enter_context(patch.object(identity.time,'time',return_value=1000000))
         self.stack.enter_context(patch.object(identity.health,'run',return_value=types.SimpleNamespace(returncode=0,stdout='vector fixture')))
