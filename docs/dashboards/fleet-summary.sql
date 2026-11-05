@@ -1,12 +1,13 @@
-WITH points AS (SELECT dt, label('host') AS host, name, label('mode') AS mode, multiIf(name='duplika_access_coverage_complete',minMerge(value_min),name IN ('duplika_collector_failed_components','duplika_storage_probe_failures'),maxMerge(value_max),avgMerge(value_avg)) AS v, avgMerge(rate_avg) AS r, sum(metrics_count) AS n FROM {{source}} WHERE dt >= greatest({{start_time}}, {{end_time}} - INTERVAL 15 MINUTE) AND dt < {{end_time}} [[ AND match(label('host'), {{servidor}}) ]] AND name IN ('uptime','logical_cpus','load5','memory_available_bytes','memory_total_bytes','memory_swap_used_bytes','memory_swap_total_bytes','cpu_seconds_total','duplika_collector_failed_components','duplika_access_coverage_complete','duplika_storage_probe_failures','duplika_monitoring_policy_essential') GROUP BY dt,host,name,mode), latest AS (
+WITH points AS (SELECT dt, label('host') AS host, name, label('mode') AS mode, multiIf(name='duplika_access_coverage_complete',minMerge(value_min),name IN ('duplika_collector_failed_components','duplika_storage_probe_failures'),maxMerge(value_max),avgMerge(value_avg)) AS v, avgMerge(rate_avg)/if(name='duplika_cpu_seconds_total',nullIf(toFloat64OrNull(label('logical_cpus')),0),1) AS r, sum(metrics_count) AS n FROM {{source}} WHERE dt >= greatest({{start_time}}, {{end_time}} - INTERVAL 15 MINUTE) AND dt < {{end_time}} [[ AND match(label('host'), {{servidor}}) ]] AND name IN ('uptime','logical_cpus','load5','memory_available_bytes','memory_total_bytes','memory_swap_used_bytes','memory_swap_total_bytes','cpu_seconds_total','duplika_cpu_seconds_total','duplika_collector_failed_components','duplika_access_coverage_complete','duplika_storage_probe_failures','duplika_monitoring_policy_essential') GROUP BY dt,host,name,mode,label('logical_cpus')), latest AS (
 SELECT host,maxIf(dt,name='memory_total_bytes') AS last_at,
-if(countIf(name='duplika_monitoring_policy_essential')>0,argMaxIf(v,dt,name='duplika_monitoring_policy_essential'),0) AS essential,
+if(countIf(name='duplika_cpu_seconds_total')>0,1,if(countIf(name='duplika_monitoring_policy_essential')>0,argMaxIf(v,dt,name='duplika_monitoring_policy_essential'),0)) AS essential,
 if(countIf(name='memory_total_bytes')>0,argMaxIf(n,dt,name='memory_total_bytes'),NULL) AS block_samples,
 if(countIf(name = 'logical_cpus') > 0, argMaxIf(v, dt, name = 'logical_cpus'), NULL) AS cpus,if(countIf(name = 'load5') > 0, argMaxIf(v, dt, name = 'load5'), NULL) AS load,
 if(countIf(name = 'memory_available_bytes') > 0, argMaxIf(v, dt, name = 'memory_available_bytes'), NULL) AS available,if(countIf(name = 'memory_total_bytes') > 0, argMaxIf(v, dt, name = 'memory_total_bytes'), NULL) AS total,
 if(countIf(name = 'memory_swap_used_bytes') > 0, argMaxIf(v, dt, name = 'memory_swap_used_bytes'), NULL) AS swap_used,if(countIf(name = 'memory_swap_total_bytes') > 0, argMaxIf(v, dt, name = 'memory_swap_total_bytes'), NULL) AS swap_total,
 if(countIf(name = 'uptime') > 0, argMaxIf(v, dt, name = 'uptime'), NULL) AS uptime,
-if(countIf(name='cpu_seconds_total' AND mode='idle' AND isFinite(r))>0,1-argMaxIf(r,dt,name='cpu_seconds_total' AND mode='idle' AND isFinite(r)),NULL) AS cpu,
+maxIf(dt,name IN ('cpu_seconds_total','duplika_cpu_seconds_total') AND mode='idle' AND isFinite(r)) AS cpu_at,
+if(countIf(name IN ('cpu_seconds_total','duplika_cpu_seconds_total') AND mode='idle' AND isFinite(r))>0,1-argMaxIf(r,dt,name IN ('cpu_seconds_total','duplika_cpu_seconds_total') AND mode='idle' AND isFinite(r)),NULL) AS cpu,
 if(countIf(name='duplika_collector_failed_components')>0,argMaxIf(v,dt,name='duplika_collector_failed_components'),NULL) AS failures,
 if(countIf(name='duplika_access_coverage_complete')>0,argMaxIf(v,dt,name='duplika_access_coverage_complete'),NULL) AS coverage,
 if(countIf(name='duplika_storage_probe_failures')>0,argMaxIf(v,dt,name='duplika_storage_probe_failures'),NULL) AS storage_failed
@@ -32,9 +33,9 @@ SELECT host AS Servidor,x.1 AS Volumen,device AS Dispositivo,x.3 AS Espacio_usad
 if(isFinite(x.4),x.4,NULL) AS Inodos_usados,x.5 AS Bytes_disponibles,x.6 AS Solo_lectura,
 if(x.7,'Sonda real','Vector heredado') AS Medicion,x.2 AS Ultima_muestra
 FROM chosen),
-worst AS (SELECT Servidor,max(Espacio_usado) AS disk_used,argMax(Volumen,Espacio_usado) AS disk_mount,max(Inodos_usados) AS inode_used,max(Solo_lectura) AS readonly FROM disks GROUP BY Servidor),
+worst AS (SELECT Servidor,max(Espacio_usado) AS disk_used,argMax(Volumen,Espacio_usado) AS disk_mount,max(Inodos_usados) AS inode_used,max(Solo_lectura) AS readonly,argMax(Bytes_disponibles,Espacio_usado) AS disk_free FROM disks GROUP BY Servidor),
 base AS (
- SELECT e.Servidor AS Servidor,l.last_at,l.essential,l.block_samples,l.cpu,l.failures,l.coverage,l.storage_failed,1-l.available/nullIf(l.total,0) AS ram,l.load/nullIf(l.cpus,0) AS load,d.disk_used,d.disk_mount,d.inode_used,d.readonly,
+ SELECT e.Servidor AS Servidor,l.last_at,l.essential,l.block_samples,if(dateDiff('second',{{start_time}},{{end_time}})<=1800 AND dateDiff('second',l.cpu_at,{{end_time}})>180,NULL,l.cpu) AS cpu,dateDiff('second',l.cpu_at,{{end_time}}) AS cpu_age,l.failures,l.coverage,l.storage_failed,1-l.available/nullIf(l.total,0) AS ram,l.load/nullIf(l.cpus,0) AS load,d.disk_used,d.disk_mount,d.disk_free,d.inode_used,d.readonly,
  if(l.last_at IS NOT NULL,dateDiff('second',l.last_at,{{end_time}}),NULL) AS age
  FROM (SELECT DISTINCT label('host') AS Servidor FROM {{source}}
 WHERE dt >= {{end_time}} - INTERVAL 30 DAY AND dt < {{end_time}}
@@ -50,10 +51,10 @@ FROM base)
 SELECT Servidor,if(essential=1,'Esencial','Anterior') AS Modo_monitoreo,multiIf(priority=3,if(dateDiff('second',{{start_time}},{{end_time}})>1800,'Sin bloque reciente · usar 30 min','Sin señal reciente'),priority=2,'Revisar',priority=1,'Vigilar',dateDiff('second',{{start_time}},{{end_time}})>1800 OR block_samples>1,'Resumen agregado','Normal') AS Estado,
 arrayStringConcat(arrayFilter(x->x!='',[
 if(last_at IS NULL OR (age>300 AND dateDiff('second',{{start_time}},{{end_time}})<=1800),'Sin bloque reciente; comprobar señal en rango corto',''),
-if(cpu IS NULL OR ram IS NULL,'Datos de recursos incompletos',''),
+if(cpu IS NULL OR ram IS NULL,'Datos de recursos incompletos o CPU sin muestra válida reciente',''),
 if(dateDiff('second',{{start_time}},{{end_time}})>1800 OR block_samples>1,'Bloque agregado: usar 30 min para mayor detalle',''),
 if(cpu>=0.8,'CPU alta',''),if(ram>=0.85,'Memoria alta',''),
 if(load>=1,'Carga elevada',''),if(disk_used>=0.8,concat('Espacio en ',disk_mount),''),
 if(readonly>0,'Volumen en solo lectura',''),if(failures>0,'Fallo del recolector',''),if(storage_failed>0,'Fallo al medir almacenamiento',''),if((coalesce(essential,0)=0 AND coverage<1),'Lectura de accesos parcial',''),if(inode_used>=0.8,'Inodos elevados',''),if(disk_used IS NULL,'Sin dato de disco','')]),' · ') AS Revisar,
-cpu AS CPU_media_bloque,ram AS RAM_media_bloque,load AS Carga_por_CPU,disk_used AS Disco_maximo,inode_used AS Inodos_maximos,age AS Edad_del_bloque_segundos,block_samples AS Muestras_host_ultimo_bloque
+cpu AS CPU_media_bloque,cpu_age AS Edad_CPU_segundos,ram AS RAM_media_bloque,load AS Carga_por_CPU,disk_used AS Disco_maximo,disk_mount AS Volumen_mas_lleno,disk_free/1073741824 AS GiB_disponibles_en_volumen,inode_used AS Inodos_maximos,age AS Edad_del_bloque_segundos,block_samples AS Muestras_host_ultimo_bloque
 FROM scored ORDER BY priority DESC,Disco_maximo DESC,Servidor SETTINGS join_use_nulls=1
