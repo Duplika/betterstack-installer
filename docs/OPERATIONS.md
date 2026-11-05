@@ -1,8 +1,31 @@
-# Operación actual: candidata rc28
+# Operación actual: candidata rc36
+
+Para la base común usar `--base-monitoring` y seguir el [README](../README.md).
+Las altas nuevas compatibles usan configure/credential, preflight e install
+con el mismo instalador rc36 verificado; no instalar rc26 como paso intermedio.
+Las migraciones admitidas son observer-v4 rc34 esencial con almacenamiento
+o los transportes mínimos heredados rc35 revisados. No forzar otros layouts.
+
+La aceptación remota requiere identidad con versión, fuente y hostname
+esperados, más dos muestras de `duplika_cpu_seconds_total` separadas por el
+intervalo de 60 s. La primera muestra del contador no tiene tasa: no usar
+una tasa antigua del dashboard para certificar el nuevo formato. Esperar
+tasas finitas para los cinco modos y un `logical_cpus` coherente.
+Comprobar heartbeat, fallos, filesystem e I/O; LVE sólo donde la capacidad
+lo declare. Para validar continuidad de LVE, esperar dos consultas de 900 s.
+Una comprobación inicial de salud no certifica esa cadencia prolongada.
+
+`metrics_delivery_verified=false` y `external_evidence_required` son estados
+locales intencionales, incluso después de verificar externamente la recepción.
+No guardar una aceptación permanente que pueda ocultar una interrupción futura.
+La reducción de muestras de CPU no equivale al ahorro total facturado ni a una
+medición de CPU/RAM del agente. Medir el transporte y los colectores por separado.
+
+## Historial rc28 y anteriores
 
 La nueva política requiere selección explícita desde rc26 completo o rc27 esencial. Ver [procedimiento esencial](ESSENTIAL-MONITORING.md) y [README](../README.md). Las siguientes secciones se conservan como historial de rutas y recuperación; no describen la frecuencia de la política esencial.
 
-# Procedimiento actual rc19
+# Procedimiento histórico rc19
 
 No usar rc18 para continuar actualizaciones rc6/rc7: rc19 contempla perfiles originales conservados por actualizaciones de identidad. Un fallo de preflight por versión del perfil no autoriza editarlo ni rebaselinar.
 
