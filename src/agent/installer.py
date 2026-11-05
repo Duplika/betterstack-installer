@@ -416,7 +416,7 @@ WantedBy=timers.target
     write(UNITS / (NAME + '.service'), service, 0o644)
     write(UNITS / (NAME + '.timer'), timer, 0o644)
     config_value = load(config)
-    identity.destination(config_value, target)
+    identity.destination(config_value, target, allow_metrics_only=bool((migration_review or {}).get('minimal_host')))
     storage_transaction = None
     if storage_enabled:
         if not storage_preserved:
@@ -443,6 +443,12 @@ WantedBy=timers.target
             raise RuntimeError('legacy_essential:unknown_review_marker')
         meta['monitoring_policy'] = legacy_essential.POLICY
         meta['resource_sampling'] = dict(legacy_essential.SAMPLING)
+    if (migration_review or {}).get('minimal_host'):
+        import minimal_host
+        if migration_review['minimal_host'] != minimal_host.MARKER:
+            raise RuntimeError('minimal_host:unknown_review_marker')
+        meta['monitoring_policy'] = minimal_host.POLICY
+        meta['resource_sampling'] = dict(minimal_host.SAMPLING)
     try:
         if migration_review:
             meta['migration_review'] = migration_review
@@ -650,6 +656,7 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc31'] = 'upgrade_rc31.json'
     reviewed_versions['4.0.0-rc32'] = 'upgrade_rc32.json'
     reviewed_versions['4.0.0-rc33'] = 'upgrade_rc33.json'
+    reviewed_versions['4.0.0-rc34'] = 'upgrade_rc34.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -667,7 +674,7 @@ def validate_v4_upgrade(target, caps):
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33')
+    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -752,7 +759,7 @@ def upgrade_v4(target, caps):
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
@@ -956,6 +963,7 @@ def main():
     p.add_argument('--simplify-context', action='store_true',
                    help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
     p.add_argument('--aggregate-errors', action='store_true', help='Agrupar errores repetidos sólo en la base minimal-v4 revisada')
+    p.add_argument('--minimal-host', action='store_true', help='Retirar lectores de logs de transportes heredados revisados; conservar métricas esenciales')
     p.add_argument('--essential-monitoring', action='store_true', help='Monitoreo esencial explícito sobre observer-v4 o transportes AlmaLinux revisados')
     p.add_argument('--user', help='Cuenta exacta del diagnóstico temporal')
     p.add_argument('--minutes', type=int, default=30)
@@ -963,6 +971,8 @@ def main():
     args = p.parse_args()
     if (args.user or args.readers or args.minutes != 30) and not args.operation.startswith('diagnostic-'):
         p.error('--user/--readers/--minutes sólo se usan con diagnóstico explícito')
+    if args.minimal_host and (args.operation not in ('preflight', 'upgrade') or args.essential_monitoring or args.aggregate_errors or args.simplify_context or args.recover_partial or args.recover_bootstrap):
+        p.error('--minimal-host sólo admite preflight/upgrade sin otras migraciones')
     if args.essential_monitoring and (args.operation not in ('preflight', 'upgrade') or args.aggregate_errors or args.simplify_context or args.recover_partial or args.recover_bootstrap):
         p.error('--essential-monitoring sólo admite preflight/upgrade sin otras migraciones')
     if args.aggregate_errors and (args.operation not in ('preflight', 'upgrade') or args.simplify_context or args.recover_partial or args.recover_bootstrap):
@@ -1018,6 +1028,12 @@ def main():
         args.target = args.target or Path('/root/perfil.json')
         target = load(args.target)
     caps = secure_target(target)
+    if args.minimal_host:
+        import minimal_host
+        minimal_host.migrate(sys.modules[__name__], target, caps, apply=args.operation == 'upgrade')
+        if args.operation == 'upgrade':
+            request_publication(target)
+        return
     if args.essential_monitoring:
         import essential_upgrade
         essential_upgrade.migrate(sys.modules[__name__], target, caps, apply=args.operation == 'upgrade')

@@ -34,7 +34,7 @@ def read(path):
     return path.read_bytes()
 
 
-def destination(config, target):
+def destination(config, target, allow_metrics_only=False):
     tokens = set()
     paths = set()
     origin = 'https://' + target['ingesting_host']
@@ -43,7 +43,14 @@ def destination(config, target):
             raise RuntimeError('unexpected_destination')
         paths.add(sink['uri'])
         tokens.add(sink['auth']['token'])
-    if paths != {origin + '/', origin + '/metrics'} or len(tokens) != 1:
+    expected = {origin + '/', origin + '/metrics'}
+    if allow_metrics_only:
+        if (set(config.get('sources', {})) != {'duplika_host', 'duplika_host_slow'}
+                or any(x.get('type') != 'host_metrics' for x in config['sources'].values())
+                or set(config.get('sinks', {})) != {'duplika_metrics'}):
+            raise RuntimeError('unexpected_minimal_graph')
+        expected = {origin + '/metrics'}
+    if paths != expected or len(tokens) != 1:
         raise RuntimeError('ambiguous_destination')
     token = next(iter(tokens))
     if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', token):
@@ -149,7 +156,8 @@ def status(publish=False, quiet=False):
     meta = json.loads(read(BASE / 'manifest.json'))
     hashes = snapshot(meta['critical_paths'], meta['config_path'])
     drift = hashes != meta['baseline']
-    uri, token = destination(json.loads(read(meta['config_path'])), meta['target'])
+    uri, token = destination(json.loads(read(meta['config_path'])), meta['target'],
+                             allow_metrics_only=bool(meta.get('migration_review', {}).get('minimal_host')))
     services = {}
     for name in meta['services']:
         services[name] = health.run(['systemctl', 'is-active', '--quiet', name]).returncode == 0
@@ -158,6 +166,11 @@ def status(publish=False, quiet=False):
         p = health.run(['systemctl', 'show', name, '-p', 'Result', '--value'])
         services[name + ':last_result'] = p.returncode == 0 and p.stdout.strip() == 'success'
     checks = {}
+    if meta.get('migration_review', {}).get('minimal_host'):
+        retired = ('duplika-vector-acl.timer', 'duplika-vector-acl.service') if meta['pipeline_variant'] == 'almalinux-wordpress-minimal-v4' else ('duplika-betterstack-acl.timer', 'duplika-betterstack-acl.service')
+        for name in retired:
+            checks['retired_inactive:' + name] = health.run(['systemctl', 'is-active', '--quiet', name]).returncode in (3, 4)
+        checks['retired_timer_disabled'] = health.run(['systemctl', 'is-enabled', retired[0]]).stdout.strip() == 'disabled'
     observer = None
     if meta['config_path'] == '/etc/duplika-betterstack-cloudlinux/vector.json':
         observer = observer_health(meta)

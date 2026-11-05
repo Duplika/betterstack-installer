@@ -177,3 +177,14 @@ descriptor O_NOFOLLOW/O_NONBLOCK. Nunca carga ese INI en PHP (-n). La confianza
 de binarios, módulos, credenciales e integridad no cambia; no corrige permisos.
 Renueva el esquema de caché para repetir el resultado al actualizar. Candidata
 pendiente de repetir el piloto; los artefactos rc33 permanecen inmutables.
+
+
+## Base mínima de host rc35
+
+En transportes heredados revisados con esencial ya seleccionado (rc30/rc34),
+`preflight --minimal-host` valida la retirada de todos los lectores de logs de
+aplicaciones/journal/check y del timer ACL. `upgrade --minimal-host` aplica la
+transición con respaldo/reversión. No combinar con otras opciones de migración.
+Conserva fuente/token, Vector, data_dir, métricas esenciales y publicación directa
+de identidad/mantenimiento. No instala observer-v4 ni añade almacenamiento
+privilegiado. Verificar recepción remota de CPU/RAM/filesystem/disco/red después.

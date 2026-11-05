@@ -20,10 +20,17 @@ def validate(api, old, target):
     if variant not in known:
         raise RuntimeError('upgrade:unreviewed_legacy_variant')
     version, config, profile, helper, blueprint, reference, services = known[variant]
-    if (old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34') or old.get('storage_observer')
+    minimal = old.get('migration_review', {}).get('minimal_host')
+    if minimal is not None:
+        import minimal_host
+        if minimal != minimal_host.MARKER:
+            raise RuntimeError('minimal_host:unknown_review_marker')
+    active_services = services[:1] if minimal else services
+    expected_oneshots = [] if minimal else [services[1][:-6] + '.service']
+    if (old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc35') or old.get('storage_observer')
             or old.get('config_path') != config or old.get('profile_path') != profile
-            or old.get('services') != services + [api.NAME + '.timer']
-            or old.get('oneshots') != [services[1][:-6] + '.service']
+            or old.get('services') != active_services + [api.NAME + '.timer']
+            or old.get('oneshots') != expected_oneshots
             or old.get('configuration_schema') != api.SCHEMA):
         raise RuntimeError('upgrade:unreviewed_legacy_layout')
     helper = Path(helper)
@@ -38,7 +45,7 @@ def validate(api, old, target):
     if old.get('critical_paths') != expected:
         raise RuntimeError('upgrade:unreviewed_legacy_paths')
     cfg = api.load(config)
-    _, token = api.identity.destination(cfg, target)
+    _, token = api.identity.destination(cfg, target, allow_metrics_only=bool(minimal))
     data = api.load(profile)
     if data.get('host') != target['host']:
         raise RuntimeError('upgrade:legacy_profile_target_mismatch')
@@ -54,6 +61,8 @@ def validate(api, old, target):
     if essential is not None:
         import legacy_essential
         generated = legacy_essential.prepare(generated, essential)
+    if minimal:
+        generated = minimal_host.prepare(generated, minimal)
     # Embedded tests are inactive; all active sources/transforms/sinks must match.
     cfg.pop('tests', None); generated.pop('tests', None)
     if cfg != generated:

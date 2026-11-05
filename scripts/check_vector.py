@@ -12,6 +12,7 @@ import threading
 import copy
 import config as observer_config
 import legacy_essential
+import minimal_host
 
 
 def main():
@@ -45,6 +46,11 @@ def main():
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/'legacy-essential.json'
             path.write_text(json.dumps(legacy_essential.prepare(base)))
+            minimal = minimal_host.prepare(legacy_essential.prepare(base))
+            minimal_path = Path(folder)/'host-only.json'
+            minimal_path.write_text(json.dumps(minimal))
+            subprocess.run([args.vector, 'test', '--config-json', str(minimal_path)], check=True, timeout=120)
+            subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(minimal_path)], check=True, timeout=120)
             subprocess.run([args.vector, 'test', '--config-json', str(path)], check=True, timeout=120)
             subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(path)], check=True, timeout=120)
     with tempfile.TemporaryDirectory() as folder:

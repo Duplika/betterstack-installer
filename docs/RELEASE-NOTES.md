@@ -1,3 +1,26 @@
+# 4.0.0-rc35 — candidata: base de host sin lectores de aplicaciones
+
+`preflight --minimal-host` / `upgrade --minimal-host` retiran explícitamente
+lectores de WordPress, WooCommerce, LiteSpeed, LSAPI, journal y relay/check de
+los dos transportes heredados revisados. Requiere la política esencial ya
+seleccionada en rc30 o rc34. Sólo quedan las dos fuentes host_metrics, su
+normalización/filtro y el destino de métricas. CPU/RAM/carga/filesystem a 60 s;
+disco/red a 300 s. La identidad y el mantenimiento siguen por su emisor directo.
+
+Detiene y deshabilita el timer ACL y detiene su servicio. No borra auxiliares,
+ACL otorgadas anteriormente, credenciales, datos, cursores ni buffers. Conserva
+el emisor, destino y data_dir. Drena/detiene el emisor antes de cambiar el grafo;
+no crea otro agente. Backups y rollback restauran archivos y estado de unidades.
+La identidad informa errores de aplicación deshabilitados y comprueba que las
+unidades retiradas permanezcan inactivas. El preflight exige grafo exacto,
+integridad y destino, emisor único y pruebas nativas como usuario vector.
+
+Esta transición reduce la base heredada a métricas de host. No convierte esa
+base en observer-v4 ni incorpora sonda root de RAID/SMART o historial LVE.
+La cobertura mínima común no equivale a implementación idéntica. El código
+congela la referencia rc34; no altera artefactos publicados ni referencias legacy.
+La recepción remota y la continuidad deben aceptarse en el piloto real.
+
 # 4.0.0-rc34 — candidata: INI EA4 root:root 0664 como datos
 
 Lector específico que admite escritura del grupo root sólo en un archivo INI
