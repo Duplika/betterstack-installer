@@ -1,6 +1,21 @@
 # Semántica de los resúmenes
 
-Las consultas de esta carpeta documentan los resúmenes corregidos sin incluir fuentes, IDs, perfiles o inventarios reales. Definir `source` como variable de fuente y `servidor` como lista dinámica múltiple basada en `label('host')`. Las consultas aceptan el filtro vacío.
+Las consultas de esta carpeta documentan los resúmenes corregidos sin incluir fuentes, IDs, perfiles o inventarios reales. Definir `source` como variable de fuente y `servidor` como lista múltiple de hostnames, con `.*` como opción y selección inicial para ver todos. Las consultas aceptan el filtro vacío. Al ampliar la flota, revisar las fuentes tanto del dashboard como de las alertas: una selección guardada de alertas puede no incorporar automáticamente una fuente nueva.
+
+## Base común rc36
+
+`fleet-summary.sql` admite CPU por núcleo histórica y CPU agregada por host.
+La nueva tasa idle se divide por `logical_cpus` de su propia serie; no se
+mezclan contadores antiguos y nuevos. En rangos de hasta 30 minutos, una tasa
+válida de CPU con más de 180 s se muestra incompleta aunque la RAM siga llegando.
+La edad es la del bloque, no una medición exacta de latencia de ingesta.
+En rangos largos se conserva la indicación de resumen agregado, sin disparar
+falsos vencimientos por el tamaño del bloque histórico.
+
+El volumen más lleno y sus GiB disponibles corresponden al mismo volumen.
+Las unidades son GiB (2^30 bytes), no GB decimales. Esta columna no suma discos
+ni mide todo el espacio libre del servidor. Se conserva la selección de
+volúmenes reales para evitar duplicados de CageFS.
 
 ## Último bloque no equivale a último ciclo
 
