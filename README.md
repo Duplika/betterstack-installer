@@ -1,4 +1,51 @@
-# Better Stack installer — candidata rc34
+# Better Stack installer — candidata rc36
+
+
+## Base esencial común rc36
+
+Seleccionar explícitamente `--base-monitoring` en `preflight`, `install` o
+`upgrade`. En altas nuevas instala directamente el observador esencial, sin
+activar accesos/procesos por cuenta ni pasar por rc26. No combinar opciones de
+migración. Las rutas históricas sin esta opción conservan su comportamiento.
+
+- Migración revisada: observer-v4 rc34 esencial con storage; o los dos
+  transportes mínimos heredados rc35 (`--minimal-host` ya aplicado).
+- Identidad común: `template_id=essential-monitoring`,
+  `monitoring_policy=essential-base-v1`, con `monitoring_capabilities` explícitas.
+  LVE, RAID, SMART y diagnóstico por cuenta no se inventan en perfiles de host.
+  La plataforma, el pipeline y la cobertura real siguen visibles.
+- CPU: suma por modo y timestamp exacto de scrape en Vector, antes del envío.
+  Emite `duplika_cpu_seconds_total` con `logical_cpus` en las etiquetas; ya no
+  envía `cpu_seconds_total` por núcleo. Mantiene los modos originales, incluido
+  `io_wait`. Reinicios y cambios en cantidad de núcleos requieren recalentar la
+  tasa; el contador agregado no se mezcla con las series antiguas.
+- Para graficar CPU usada: `1 - tasa_idle / logical_cpus`. Los consumidores
+  existentes deben admitir ambas representaciones antes de migrar un servidor.
+- CPU/RAM/filesystem siguen cada 60 s; red/I/O cada 300 s; LVE histórico cada
+  900 s cuando está disponible. No cambia fuente, credencial, offsets o buffers.
+- Las sondas y el primer ciclo local deben pasar; la aceptación remota sigue
+  siendo independiente. No implica promoción a estable.
+
+Después de descargar desde el commit comunicado y verificar su SHA256:
+
+```bash
+# Servidor existente compatible: primero revisar el preflight.
+bash /root/installer-rc36.sh preflight --base-monitoring
+bash /root/installer-rc36.sh upgrade --base-monitoring
+bash /root/installer-rc36.sh verify
+
+# Alta nueva, tras configure/credential con el mismo instalador:
+bash /root/installer-rc36.sh preflight --target /root/perfil.json --base-monitoring
+bash /root/installer-rc36.sh install --target /root/perfil.json --credential /root/fuente.json --base-monitoring
+```
+
+El upgrade respalda y revierte ante fallos, y sólo reinicia el transporte del
+monitor. El rollback explícito conserva datos de ejecución y cursores:
+`bash /root/installer-rc36.sh rollback`. El despliegue exige un piloto por familia
+antes de continuar con los demás servidores. Alta nueva AlmaLinux 8 conserva la
+restricción previa: sólo migración revisada.
+
+## Historial y rutas anteriores
 
 Monitoreo esencial para servidores cPanel con una migración explícita desde **observer-v4 rc26 completo o rc27/rc28/rc29 esencial, con sonda de almacenamiento**, y ajuste de host para los dos transportes AlmaLinux WordPress revisados. rc34 es candidata: no implica aceptación remota ni promoción a estable. Los artefactos previos y las referencias legacy se conservan intactos.
 

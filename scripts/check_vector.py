@@ -13,6 +13,7 @@ import copy
 import config as observer_config
 import legacy_essential
 import minimal_host
+import base_monitoring
 
 
 def main():
@@ -49,6 +50,10 @@ def main():
             minimal = minimal_host.prepare(legacy_essential.prepare(base))
             minimal_path = Path(folder)/'host-only.json'
             minimal_path.write_text(json.dumps(minimal))
+            common_path=Path(folder)/'common-base.json'
+            common_path.write_text(json.dumps(base_monitoring.cpu_graph(minimal,'legacy_host_essential','duplika_metrics')))
+            subprocess.run([args.vector,'test','--config-json',str(common_path)],check=True,timeout=120)
+            subprocess.run([args.vector,'validate','--no-environment','--config-json',str(common_path)],check=True,timeout=120)
             subprocess.run([args.vector, 'test', '--config-json', str(minimal_path)], check=True, timeout=120)
             subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(minimal_path)], check=True, timeout=120)
             subprocess.run([args.vector, 'test', '--config-json', str(path)], check=True, timeout=120)
@@ -69,6 +74,13 @@ def main():
         path = Path(folder) / 'essential.json'; path.write_text(json.dumps(essential))
         subprocess.run([args.vector, 'test', '--config-json', str(path)], check=True, timeout=120)
         subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(path)], check=True, timeout=120)
+    check_base_cpu(args.vector)
+    common_observer=observer_config.make_config({'host':'cloud.example.net','server_ip':'203.0.113.20',
+        'monitoring_policy':'essential-v1','disk_io_observer':True,'base_monitoring':True},'TEST_SECRET','s1234568.us-west-2a.betterstackdata.com')
+    with tempfile.TemporaryDirectory() as folder:
+        path=Path(folder)/'common-observer.json';path.write_text(json.dumps(common_observer))
+        subprocess.run([args.vector,'test','--config-json',str(path)],check=True,timeout=120)
+        subprocess.run([args.vector,'validate','--no-environment','--config-json',str(path)],check=True,timeout=120)
     print('Synthetic context cleanup: ' + str(len(config['tests'])) + ' native Vector cases passed.')
 
 
@@ -226,6 +238,47 @@ def check_event_time_bound(vector, config):
     for warning in ('Mapping failed', 'Failed to create value merger', 'error[E'):
         assert warning not in result.stderr, result.stderr
     print('Native event-time bounds: delayed burst, out-of-order/offset dates, SQL/LSAPI, exact boundary and counts passed.')
+
+
+def check_base_cpu(vector):
+    import base_monitoring
+    original = {'transforms': {}, 'sinks': {'metrics': {'inputs': ['input']}}}
+    prepared = base_monitoring.cpu_graph(original, 'input', 'metrics')
+    transforms = prepared['transforms']
+    transforms['base_cpu_reduce'].update(expire_after_ms=100, flush_period_ms=20)
+    graph = {'sources': {'input': {'type':'stdin','decoding':{'codec':'json'}}},
+        'transforms': transforms,
+        'sinks': {'output': {'type':'console','inputs':prepared['sinks']['metrics']['inputs'],
+            'target':'stdout','encoding':{'codec':'json'}}}}
+    rows=[]
+    # Two scrapes, two modes, two hosts, a reset and a CPU-count change.
+    for host in ('first.example.net','second.example.net'):
+        for second,cores in ((0,2),(1,3)):
+            for mode in ('idle','io_wait'):
+                for core in range(cores):
+                    rows.append({'dt':f'2026-01-01T00:00:0{second}Z','name':'cpu_seconds_total',
+                        'counter':{'value':float(core+1 if second else (core+1)*100)},
+                        'tags':{'host':host,'cpu':str(core),'mode':mode}})
+    rows.append({'dt':'2026-01-01T00:00:00Z','name':'load1',
+                 'gauge':{'value':2},'tags':{'host':'first.example.net'}})
+    with tempfile.TemporaryDirectory() as folder:
+        path=Path(folder)/'cpu.json';path.write_text(json.dumps(graph))
+        result=subprocess.run([vector,'--config-json',str(path)],
+            input=''.join(json.dumps(x)+'\n' for x in rows),capture_output=True,text=True,timeout=15)
+    assert result.returncode==0,result.stderr
+    output=[json.loads(x) for x in result.stdout.splitlines()]
+    assert len(output)==9,output
+    assert len([x for x in output if x['name']=='load1'])==1,output
+    for row in output:
+        if row['name']=='load1':continue
+        assert row['name']=='duplika_cpu_seconds_total',row
+        assert 'cpu' not in row['tags'],row
+        second=int(row['dt'][18]);assert second in (0,1),row
+        assert row['tags']['logical_cpus']==str(2 if second==0 else 3),row
+        assert row['counter']['value']==(300 if second==0 else 6),row
+        assert row['tags']['mode'] in ('idle','io_wait'),row
+    assert 'Mapping failed' not in result.stderr,result.stderr
+    print('Native CPU totals: exact scrape/host/mode isolation, reset, core-count change and passthrough passed.')
 
 
 if __name__ == '__main__':

@@ -449,6 +449,14 @@ WantedBy=timers.target
             raise RuntimeError('minimal_host:unknown_review_marker')
         meta['monitoring_policy'] = minimal_host.POLICY
         meta['resource_sampling'] = dict(minimal_host.SAMPLING)
+    if (migration_review or {}).get('base_monitoring'):
+        import base_monitoring
+        if migration_review['base_monitoring'] != base_monitoring.MARKER:
+            raise RuntimeError('base:unknown_review_marker')
+        meta['monitoring_policy'] = base_monitoring.POLICY
+        meta['base_template_id'] = base_monitoring.TEMPLATE
+        meta['monitoring_capabilities'] = base_monitoring.contract(pipeline_variant == 'observer-v4', caps)
+        meta.setdefault('resource_sampling', {}).update(host_seconds=60, filesystem_seconds=60, network_seconds=300, disk_io_seconds=300, cpu_aggregation='host_sum_by_mode')
     try:
         if migration_review:
             meta['migration_review'] = migration_review
@@ -555,20 +563,21 @@ def resource_preflight(caps):
         'lve_timeout_seconds': 40, 'persistent_changes_applied': False}))
 
 
-def base_preflight(target):
+def base_preflight(target, essential_base=False):
     with tempfile.TemporaryDirectory(prefix='duplika-preflight4-', dir='/root') as folder:
         stage = Path(folder)
-        for name in ('install_base.py', 'config.py', 'collector.py', 'capabilities.py'):
+        for name in ('install_base.py', 'config.py', 'collector.py', 'capabilities.py', 'base_monitoring.py'):
             shutil.copyfile(HERE / name, stage / name)
-        write(stage / 'deployment.json', identity.canonical(target))
+        write(stage / 'deployment.json', identity.canonical(dict(target, base_monitoring=True) if essential_base else target))
         response = run([sys.executable, str(stage / 'install_base.py'), '--preflight'])
         if response.returncode:
             print((response.stdout + '\n' + response.stderr)[-6000:], file=sys.stderr)
             raise RuntimeError('preflight:base_checks_failed')
-        resource_preflight(detect())
+        if not essential_base:
+            resource_preflight(detect())
 
 
-def fresh(target, caps, credential, recover_bootstrap=False):
+def fresh(target, caps, credential, recover_bootstrap=False, essential_base=False):
     if caps['os_id'] == 'almalinux' and caps['os_version'].split('.')[0] == '8':
         raise RuntimeError('install:almalinux8_reviewed_migration_only')
     if recover_bootstrap:
@@ -580,13 +589,17 @@ def fresh(target, caps, credential, recover_bootstrap=False):
         raise RuntimeError('install:invalid_source_credential')
     if (LEGACY / 'manifest.json').exists() or Path('/etc/duplika-betterstack').exists() or Path('/etc/vector/duplika-profile.json').exists():
         raise RuntimeError('install:legacy_layout_detected_use_upgrade')
-    resource_preflight(caps)
+    if essential_base:
+        import base_monitoring
+        base_monitoring.fresh_preflight(sys.modules[__name__], target, caps)
+    else:
+        resource_preflight(caps)
     write(STATE / 'install-pending.json', identity.canonical({'phase': 'base_installing', 'target': target}))
     with tempfile.TemporaryDirectory(prefix='duplika-install4-', dir='/root') as folder:
         stage = Path(folder)
-        for name in ('install_base.py', 'config.py', 'collector.py', 'capabilities.py'):
+        for name in ('install_base.py', 'config.py', 'collector.py', 'capabilities.py', 'base_monitoring.py'):
             shutil.copyfile(HERE / name, stage / name)
-        write(stage / 'deployment.json', identity.canonical(target))
+        write(stage / 'deployment.json', identity.canonical(dict(target, base_monitoring=True) if essential_base else target))
         write(stage / 'credentials.json', identity.canonical(creds))
         # Native tests and validation are part of the reviewed base installer.
         for operation in ('preflight', 'install'):
@@ -617,7 +630,9 @@ def finish_install(target, caps):
         raise RuntimeError('resume:base_changed_review_required')
     activate(target, caps, config, profile,
         ['duplika-betterstack-cloudlinux.service', 'duplika-cloudlinux-observer.timer'],
-        ['duplika-cloudlinux-observer.service'], [Path(p) for p in pending['paths']], load(profile)['vector_binary'], storage_enabled=True)
+        ['duplika-cloudlinux-observer.service'], [Path(p) for p in pending['paths']], load(profile)['vector_binary'],
+        migration_review={'base_monitoring': 'essential_base_v36'} if load(profile).get('base_monitoring') else None,
+        storage_enabled=True)
     write(STATE / 'install-pending.json', identity.canonical({'phase': 'complete', 'target': target}))
 
 
@@ -657,6 +672,7 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc32'] = 'upgrade_rc32.json'
     reviewed_versions['4.0.0-rc33'] = 'upgrade_rc33.json'
     reviewed_versions['4.0.0-rc34'] = 'upgrade_rc34.json'
+    reviewed_versions['4.0.0-rc35'] = 'upgrade_rc35.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -963,6 +979,7 @@ def main():
     p.add_argument('--simplify-context', action='store_true',
                    help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
     p.add_argument('--aggregate-errors', action='store_true', help='Agrupar errores repetidos sólo en la base minimal-v4 revisada')
+    p.add_argument('--base-monitoring', action='store_true', help='Instalar o migrar a la base esencial común con CPU agregada')
     p.add_argument('--minimal-host', action='store_true', help='Retirar lectores de logs de transportes heredados revisados; conservar métricas esenciales')
     p.add_argument('--essential-monitoring', action='store_true', help='Monitoreo esencial explícito sobre observer-v4 o transportes AlmaLinux revisados')
     p.add_argument('--user', help='Cuenta exacta del diagnóstico temporal')
@@ -971,6 +988,8 @@ def main():
     args = p.parse_args()
     if (args.user or args.readers or args.minutes != 30) and not args.operation.startswith('diagnostic-'):
         p.error('--user/--readers/--minutes sólo se usan con diagnóstico explícito')
+    if args.base_monitoring and (args.operation not in ('preflight','install','upgrade') or args.minimal_host or args.essential_monitoring or args.aggregate_errors or args.simplify_context or args.recover_partial or args.recover_bootstrap):
+        p.error('--base-monitoring sólo admite preflight/install/upgrade sin otras migraciones')
     if args.minimal_host and (args.operation not in ('preflight', 'upgrade') or args.essential_monitoring or args.aggregate_errors or args.simplify_context or args.recover_partial or args.recover_bootstrap):
         p.error('--minimal-host sólo admite preflight/upgrade sin otras migraciones')
     if args.essential_monitoring and (args.operation not in ('preflight', 'upgrade') or args.aggregate_errors or args.simplify_context or args.recover_partial or args.recover_bootstrap):
@@ -1028,6 +1047,24 @@ def main():
         args.target = args.target or Path('/root/perfil.json')
         target = load(args.target)
     caps = secure_target(target)
+    if args.base_monitoring:
+        import base_monitoring
+        if (BASE/'complete').exists():
+            base_monitoring.migrate(sys.modules[__name__], target, caps, apply=args.operation in ('upgrade','install'))
+            if args.operation in ('upgrade','install'):
+                request_publication(target)
+        else:
+            if args.operation == 'upgrade':
+                raise RuntimeError('base:fresh_host_requires_install')
+            if args.operation == 'preflight':
+                base_monitoring.fresh_preflight(sys.modules[__name__], target, caps)
+            else:
+                if not args.credential:
+                    p.error('--credential es obligatorio para instalación nueva')
+                mkdir(BASE); mkdir(STATE)
+                fresh(target, caps, args.credential, essential_base=True)
+                request_publication(target)
+        return
     if args.minimal_host:
         import minimal_host
         minimal_host.migrate(sys.modules[__name__], target, caps, apply=args.operation == 'upgrade')

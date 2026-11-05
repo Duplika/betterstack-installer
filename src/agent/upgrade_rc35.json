@@ -1,0 +1,9 @@
+{
+  "identity.py": "6f7b68ec9865a006a372dc4da3d11566e75c8012c3ca8b81ef1805ec24ab34be",
+  "health.py": "80b6402e09cccc17fc0d2c3606fde8fbf602fc222c8ca8213f407f7454ca6f5d",
+  "capabilities.py": "89915cc3426c0026c3de838133851fc1e29266608823a22452647b85caf58011",
+  "collector.py": "72cebc3696b60de535543058e94dd4c6d8633537984ca3c5e2d046594494a110",
+  "storage.py": "0da1ed645e108f694bc25e8bd81c6fe9708e3f6ba04dc54420de5a00b8b41308",
+  "identity_service_template": "[Unit]\nDescription=Duplika v4 hourly identity and maintenance observations\nAfter=network-online.target\n[Service]\nType=oneshot\nExecStart=__PYTHON__ -E -s -B /etc/duplika-betterstack-v4/identity.py --publish\nUMask=0077\nNice=15\nIOSchedulingClass=idle\nCPUQuota=10%\nMemoryMax=128M\nTimeoutStartSec=120\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/var/lib/duplika-betterstack-v4\n",
+  "duplika-betterstack-v4.timer": "60458e195d11e48cad4c910ec05c7578f47dc400b980fe32fee49ceb76edc820"
+}

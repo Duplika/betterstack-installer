@@ -89,6 +89,10 @@ def preflight():
         pass
     else:
         raise RuntimeError('Ya existe el usuario reservado ' + READER + '. Revisar antes de instalar.')
+    for unit in ('vector.service','duplika-betterstack.service','duplika-betterstack-cloudlinux.service'):
+        status = run(['systemctl','is-active','--quiet',unit], check=False)
+        if status.returncode not in (3,4):
+            raise RuntimeError('Existing or unknown transport state: ' + unit)
     roots = set()
     for candidate in ('/var/log/apache2/domlogs', '/usr/local/apache/domlogs', '/etc/apache2/logs/domlogs'):
         p = Path(candidate)
@@ -112,6 +116,8 @@ def preflight():
         'isolates_supported': capabilities['isolates_supported'], 'mysql_governor': capabilities['mysql_governor'],
         'capabilities': capabilities, 'agent_version': VERSION, 'wordpress': DEPLOYMENT.get('wordpress', []),
         'interval_seconds': 60, 'account_count': account_count}
+    if DEPLOYMENT.get('base_monitoring'):
+        profile.update(monitoring_policy='essential-v1', disk_io_observer=True, base_monitoring=True)
     print(json.dumps(profile, ensure_ascii=False, indent=2))
     print('Preflight correcto. No se leyó ningún wp-config.php ni log de una aplicación.')
     return profile
@@ -262,11 +268,17 @@ WantedBy=timers.target
         events = (ROOT / 'spool' / 'events.jsonl').read_text().splitlines()
         heartbeat = next(json.loads(row) for row in reversed(events)
                          if json.loads(row).get('event_kind') == 'collector_heartbeat')
-        expected_lve = True if profile['capabilities']['lve_status'] == 'available' else 'not_supported'
+        if profile.get('base_monitoring'):
+            expected_lve = 'available' if profile['capabilities']['lve_status'] == 'available' else 'not_supported'
+        else:
+            expected_lve = True if profile['capabilities']['lve_status'] == 'available' else 'not_supported'
         if heartbeat['components'].get('lve') != expected_lve or heartbeat['components'].get('processes') == 'failed':
             raise RuntimeError('No se pudo medir procesos/LVE bajo systemd. Revisar journal antes de continuar.')
         access = heartbeat['components'].get('access')
-        if not isinstance(access, dict) or access.get('files', 0) == 0:
+        if profile.get('base_monitoring'):
+            if access != 'disabled' or heartbeat['components'].get('processes') != 'disabled' or heartbeat['components'].get('disk_io') != 'available':
+                raise RuntimeError('Essential base first cycle failed')
+        elif not isinstance(access, dict) or access.get('files', 0) == 0:
             raise RuntimeError('No se pudo leer ningún domlog de los dominios cPanel bajo systemd.')
         run(['runuser', '-u', READER, '--', vector, 'validate', '--config-json', str(BASE / 'vector.json')])
         run(['systemctl', 'enable', '--now', SERVICE + '.service', COLLECTOR + '.timer'])

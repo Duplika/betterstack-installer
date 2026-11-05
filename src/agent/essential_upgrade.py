@@ -34,10 +34,11 @@ def disk_coverage(api):
     return proof
 
 
-def storage_coverage(api):
-    marker = api.load(api.CLOUD_DATA / 'private/storage-health.json')
-    if not 0 <= time.time() - marker.get('at', 0) < 180 or marker.get('probe_failures') != 0:
-        raise RuntimeError('essential:storage_not_healthy')
+def storage_coverage(api, require_healthy=True):
+    if require_healthy:
+        marker = api.load(api.CLOUD_DATA / 'private/storage-health.json')
+        if not 0 <= time.time() - marker.get('at', 0) < 180 or marker.get('probe_failures') != 0:
+            raise RuntimeError('essential:storage_not_healthy')
     args = ['systemd-run', '--wait', '--pipe', '--collect']
     for line in api.STORAGE_SERVICE.splitlines():
         if '=' in line and line.split('=', 1)[0] not in ('Description', 'Type', 'ExecStart', 'ReadWritePaths'):

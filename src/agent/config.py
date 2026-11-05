@@ -89,5 +89,10 @@ def make_config(profile, token, ingest):
          'outputs': [{'extract_from': 'host_format', 'conditions': [{'type': 'vrl', 'source':
               'assert_eq!(.name, "load1")\nassert_eq!(.tags.server_ip, ' + json.dumps(profile['server_ip']) + ')'}]}]},
     ]
-    return essential_config(result, bool(profile.get('disk_io_observer'))) if profile.get('monitoring_policy') == 'essential-v1' else result
+    if profile.get('monitoring_policy') == 'essential-v1':
+        result = essential_config(result, bool(profile.get('disk_io_observer')))
+    if profile.get('base_monitoring'):
+        from base_monitoring import cpu_graph
+        result = cpu_graph(result, 'host_essential', 'metrics')
+    return result
 

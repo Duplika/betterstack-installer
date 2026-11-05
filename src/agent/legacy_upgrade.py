@@ -27,7 +27,7 @@ def validate(api, old, target):
             raise RuntimeError('minimal_host:unknown_review_marker')
     active_services = services[:1] if minimal else services
     expected_oneshots = [] if minimal else [services[1][:-6] + '.service']
-    if (old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc35') or old.get('storage_observer')
+    if (old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc35', '4.0.0-rc36') or old.get('storage_observer')
             or old.get('config_path') != config or old.get('profile_path') != profile
             or old.get('services') != active_services + [api.NAME + '.timer']
             or old.get('oneshots') != expected_oneshots
@@ -63,6 +63,12 @@ def validate(api, old, target):
         generated = legacy_essential.prepare(generated, essential)
     if minimal:
         generated = minimal_host.prepare(generated, minimal)
+    base = old.get('migration_review', {}).get('base_monitoring')
+    if base is not None:
+        import base_monitoring
+        if base != base_monitoring.MARKER or not minimal:
+            raise RuntimeError('base:unknown_review_marker')
+        generated = base_monitoring.cpu_graph(generated, 'legacy_host_essential', 'duplika_metrics')
     # Embedded tests are inactive; all active sources/transforms/sinks must match.
     cfg.pop('tests', None); generated.pop('tests', None)
     if cfg != generated:

@@ -189,7 +189,7 @@ def status(publish=False, quiet=False):
     event = {'dt': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'event_kind': 'collector_identity',
         'host': meta['target']['host'], 'server_ip': meta['target']['server_ip'],
         'source_id': meta['target']['source_id'],
-        'template_id': 'cloudlinux-cpanel-multisite' if meta['capabilities']['os_id'] == 'cloudlinux' else 'almalinux-cpanel-wordpress',
+        'template_id': meta.get('base_template_id') or ('cloudlinux-cpanel-multisite' if meta['capabilities']['os_id'] == 'cloudlinux' else 'almalinux-cpanel-wordpress'),
         'installer_version': meta['installer_version'],
         'agent_version': meta['agent_version'], 'template_version': '4', 'configuration_schema': SCHEMA,
         'vector_version': vector_version, 'capabilities': meta['capabilities'],
@@ -206,6 +206,8 @@ def status(publish=False, quiet=False):
         event['observer_health'] = observer
     if meta.get('resource_sampling'):
         event['resource_sampling'] = meta['resource_sampling']
+    if meta.get('monitoring_capabilities'):
+        event['monitoring_capabilities'] = meta['monitoring_capabilities']
     if meta.get('monitoring_policy'):
         event['monitoring_policy'] = meta['monitoring_policy']
     old = json.loads(read(STATE / 'last-send.json')) if (STATE / 'last-send.json').exists() else {}
