@@ -1,3 +1,12 @@
+# 4.0.0-rc37 — candidata: inventario mensual de cgroups
+
+- CloudLinux registra la jerarquía activa, el módulo LVE, TuneD y el kernel
+  una vez por mes UTC mediante el servicio de identidad existente.
+- La muestra y su acuse se conservan localmente. Un reintento usa la fecha de
+  la observación original. AlmaLinux conserva su política sin esta sonda.
+- El upgrade valida rc36 y retira el piloto oficial de forma reversible,
+  conservando la configuración y los checkpoints de Vector.
+
 # 4.0.0-rc35 — candidata: base de host sin lectores de aplicaciones
 
 `preflight --minimal-host` / `upgrade --minimal-host` retiran explícitamente

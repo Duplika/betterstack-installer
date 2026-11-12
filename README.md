@@ -1,5 +1,31 @@
-# Better Stack installer — candidata rc36
+# Better Stack installer — candidata rc37
 
+## Inventario mensual de cgroups en CloudLinux
+
+La identidad horaria toma una lectura al instalar o actualizar y una por mes
+calendario UTC. Usa `stat -fc %T /sys/fs/cgroup/` y comprueba si el módulo LVE
+está cargado. `cgroup2fs` indica v2 unificado. `tmpfs` en la raíz se registra
+como no unificado porque también puede corresponder a un montaje híbrido.
+La métrica `duplika_cloudlinux_cgroups_info` conserva el formato del piloto y
+se envía por el publicador de identidad existente. Si el envío falla,
+reintenta la misma muestra en el siguiente ciclo. `verify` muestra el estado
+local de la muestra y la recepción se comprueba en Better Stack.
+
+Para actualizar una instalación revisada y conservar su política de monitoreo,
+usar los comandos normales después de verificar el instalador fijado al commit:
+
+```bash
+bash /root/installer-rc37.sh preflight
+bash /root/installer-rc37.sh upgrade
+bash /root/installer-rc37.sh verify
+```
+
+La actualización admite rc34/rc35/rc36 en los layouts revisados. Si encuentra
+el temporizador piloto oficial de cgroups, lo incluye en el respaldo de la
+transacción y lo retira. El rollback restaura el piloto si estaba presente.
+El inventario aplica sólo a CloudLinux. No modifica la jerarquía de cgroups,
+TuneD, el kernel, la configuración de Vector ni la frecuencia de los demás
+colectores. `--base-monitoring` sigue disponible para seleccionar la base común.
 
 ## Base esencial común rc36
 

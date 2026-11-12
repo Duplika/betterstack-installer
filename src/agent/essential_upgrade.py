@@ -116,8 +116,7 @@ def migrate(api, target, caps, apply=False):
              api.UNITS / (api.NAME + '.service'), api.UNITS / (api.NAME + '.timer')]
     services = [api.NAME + '.timer', api.NAME + '.service', 'duplika-cloudlinux-observer.timer',
                 'duplika-betterstack-cloudlinux.service']
-    transaction = api.backup(paths, services)
-    try:
+    with api.upgrade_transaction(paths, services, target, caps):
         api.execute(['systemctl', 'stop', api.NAME + '.timer', api.NAME + '.service', 'duplika-cloudlinux-observer.timer'])
         # A queued old cycle may not have acquired collector.lock yet. Waiting
         # after taking the lock would make that healthy cycle fail with EAGAIN.
@@ -149,9 +148,6 @@ def migrate(api, target, caps, apply=False):
             [name for name in old['oneshots'] if name != 'duplika-storage-observer.service'],
             api.observer_base_paths(), old['vector_binary'], 'observer-v4', review,
             storage_enabled=True, storage_preserved=True)
-    except BaseException as error:
-        api.recover_failure(transaction, error)
-        raise
 
 
 def diagnostic(api, args):

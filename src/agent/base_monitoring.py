@@ -101,6 +101,15 @@ def plan(api, target, caps):
 
 def migrate(api, target, caps, apply=False):
     current = api.load(api.BASE/'manifest.json')
+    if (current.get('agent_version') == '4.0.0-rc36'
+            and current.get('migration_review', {}).get('base_monitoring') == MARKER):
+        if apply:
+            api.upgrade(target, caps)
+        else:
+            api.validate_v4_upgrade(target, caps)
+            api.identity.status(quiet=True)
+            print(json.dumps({'policy': POLICY, 'changes_applied': False}))
+        return
     if current.get('agent_version') == api.VERSION:
         api.validate_current(target, caps)
         if current.get('migration_review', {}).get('base_monitoring') != MARKER:
@@ -125,8 +134,7 @@ def migrate(api, target, caps, apply=False):
     if observer:
         paths += [api.CLOUD/'collector.py', api.CLOUD/'profile.json']
         units += ['duplika-cloudlinux-observer.timer']
-    transaction = api.backup(paths, units)
-    try:
+    with api.upgrade_transaction(paths, units, target, caps):
         api.execute(['systemctl', 'stop', *units])
         if observer:
             api.wait_observer_inactive()
@@ -159,7 +167,4 @@ def migrate(api, target, caps, apply=False):
             original + ([api.CLOUD/'collector.py',api.CLOUD/'profile.json'] if observer else []),
             old['vector_binary'],old['pipeline_variant'],review,
             storage_enabled=observer,storage_preserved=observer)
-    except BaseException as error:
-        api.recover_failure(transaction, error)
-        raise
     print(json.dumps(dict(proof, changes_applied=True)))

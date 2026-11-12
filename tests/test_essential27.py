@@ -64,9 +64,12 @@ class PressureTests(unittest.TestCase):
         self.assertNotIn('private output', json.dumps(out.logs))
 
     def test_query_uses_closed_utc_windows_and_no_result_truncation(self):
-        with patch.object(c.shutil, 'which', return_value='/usr/bin/python3'), \
-             patch.object(c, 'command', return_value=json.dumps({'result':'success','users':[]})) as command:
-            start, end, records = c.query_pressure({}, 1800000100)
+        with tempfile.TemporaryDirectory(dir='/root') as directory:
+            tool = Path(directory) / 'cloudlinux-statistics'
+            tool.touch(mode=0o700)
+            with patch.object(c.shutil, 'which', return_value=str(tool)), \
+                 patch.object(c, 'command', return_value=json.dumps({'result':'success','users':[]})) as command:
+                start, end, records = c.query_pressure({}, 1800000100)
         args, kwargs = command.call_args
         self.assertEqual(end-start, 900)
         self.assertLessEqual(end, 1800000100-60)

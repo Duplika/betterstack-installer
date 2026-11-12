@@ -32,6 +32,8 @@ NAME = 'duplika-betterstack-v4'
 CLOUD = Path('/etc/duplika-betterstack-cloudlinux')
 CLOUD_DATA = Path('/var/lib/duplika-betterstack-cloudlinux')
 LEGACY = Path('/etc/duplika-betterstack-identity')
+CGROUPS_PILOT = 'duplika-cloudlinux-cgroups'
+CGROUPS_PILOT_SCRIPT = Path('/usr/local/sbin') / (CGROUPS_PILOT + '.py')
 
 
 def load(path):
@@ -273,6 +275,49 @@ def recover_failure(record, original):
         raise RuntimeError(str(original) + '; ' + str(rollback_error)) from None
 
 
+def cgroups_pilot(target, caps):
+    """Recognize the standalone pilot by its exact root-owned artifacts."""
+    if caps.get('os_id') != 'cloudlinux':
+        return []
+    service = UNITS / (CGROUPS_PILOT + '.service')
+    timer = UNITS / (CGROUPS_PILOT + '.timer')
+    paths = [CGROUPS_PILOT_SCRIPT, service, timer]
+    if not any(path.exists() or path.is_symlink() for path in paths):
+        return []
+    expected = (
+        '33cc85a5eec1cf50ba08da92b47b06b22c69ba767082eac7748917c92e878e14',
+        '92d8d1aa448fc0b7f383be2ae9400bddf9dcbf0e3301e20c3ded44dea3a6af85',
+        '2f00ff003d148c9da03efc621b91a964afec008da893cbc3291fb9bd10420d53',
+    )
+    try:
+        script, unit, schedule = map(identity.read, paths)
+        exec_line = b'ExecStart=/usr/bin/python3 /usr/local/sbin/duplika-cloudlinux-cgroups.py '
+        unit = unit.replace(exec_line + target['host'].encode() + b'\n', exec_line + b'__HOST__\n')
+        hashes = tuple(hashlib.sha256(data).hexdigest() for data in (script, unit, schedule))
+        if hashes != expected or any(unit_files(path.name) != [path] for path in (service, timer)):
+            raise RuntimeError('pilot_differs')
+    except (OSError, RuntimeError):
+        raise RuntimeError('cgroups:unreviewed_standalone_pilot') from None
+    return paths
+
+
+@contextlib.contextmanager
+def upgrade_transaction(paths, services, target, caps):
+    pilot = cgroups_pilot(target, caps)
+    units = [CGROUPS_PILOT + '.timer'] if pilot else []
+    transaction = backup([*paths, *pilot], [*services, *units])
+    try:
+        if pilot:
+            execute(['systemctl', 'disable', '--now', units[0]])
+            execute(['systemctl', 'stop', CGROUPS_PILOT + '.service'])
+            for path in pilot:
+                path.unlink()
+        yield
+    except BaseException as error:
+        recover_failure(transaction, error)
+        raise
+
+
 def runtime_files():
     return [BASE / name for name in ('identity.py', 'health.py', 'capabilities.py')]
 
@@ -437,6 +482,8 @@ WantedBy=timers.target
         meta['monitoring_policy'] = load(profile_path).get('monitoring_policy', 'observer-v4')
     if storage_enabled:
         meta['storage_observer'] = True
+    if caps.get('os_id') == 'cloudlinux':
+        meta['cgroups_inventory'] = True
     if (migration_review or {}).get('essential_host_sampling'):
         import legacy_essential
         if migration_review['essential_host_sampling'] != legacy_essential.MARKER:
@@ -673,6 +720,7 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc33'] = 'upgrade_rc33.json'
     reviewed_versions['4.0.0-rc34'] = 'upgrade_rc34.json'
     reviewed_versions['4.0.0-rc35'] = 'upgrade_rc35.json'
+    reviewed_versions['4.0.0-rc36'] = 'upgrade_rc36.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -690,7 +738,7 @@ def validate_v4_upgrade(target, caps):
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34')
+    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -775,7 +823,7 @@ def upgrade_v4(target, caps):
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36')
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
@@ -785,8 +833,11 @@ def upgrade_v4(target, caps):
     had_storage = bool(old.get('storage_observer'))
     if add_storage:
         paths += storage_paths()
-    transaction = backup(paths, services + (['duplika-storage-observer.timer', 'duplika-storage-observer.service'] if add_storage else []))
-    try:
+    if add_storage:
+        services_to_restore = services + ['duplika-storage-observer.timer', 'duplika-storage-observer.service']
+    else:
+        services_to_restore = services
+    with upgrade_transaction(paths, services_to_restore, target, caps):
         execute(['systemctl', 'stop', *services])
         if refresh_observer:
             # Stopping a timer does not finish an already queued oneshot. Let
@@ -811,9 +862,6 @@ def upgrade_v4(target, caps):
         activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [name for name in old['services'] if name not in (NAME + '.timer', 'duplika-storage-observer.timer')],
             [name for name in old['oneshots'] if name != 'duplika-storage-observer.service'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'], old.get('migration_review'), storage_enabled=add_storage or had_storage, storage_preserved=had_storage)
-    except BaseException as error:
-        recover_failure(transaction, error)
-        raise
 
 
 def upgrade(target, caps, simplify_context=False, aggregate_errors=False):
@@ -863,8 +911,7 @@ def upgrade(target, caps, simplify_context=False, aggregate_errors=False):
     # Resolve effective vendor/local units and drop-ins while the reviewed old
     # pipeline is still running. Never discover missing paths after stopping it.
     original, active_services = migration_files(spec, simplify_context)
-    transaction = backup(paths, services)
-    try:
+    with upgrade_transaction(paths, services, target, caps):
         execute(['systemctl', 'disable', '--now', 'duplika-betterstack-identity.timer'])
         execute(['systemctl', 'stop', 'duplika-betterstack-identity.service'])
         if simplify_context:
@@ -895,9 +942,6 @@ def upgrade(target, caps, simplify_context=False, aggregate_errors=False):
                           'relay_and_checkpoints': 'preserved'})
         activate(target, caps, config, profile_path, active_services,
                  [name[:-6] + '.service' for name in active_services if name.endswith('.timer')], original, vector, variant, review)
-    except BaseException as error:
-        recover_failure(transaction, error)
-        raise
 
 
 
@@ -1047,6 +1091,8 @@ def main():
         args.target = args.target or Path('/root/perfil.json')
         target = load(args.target)
     caps = secure_target(target)
+    if args.operation == 'preflight':
+        cgroups_pilot(target, caps)
     if args.base_monitoring:
         import base_monitoring
         if (BASE/'complete').exists():

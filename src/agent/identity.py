@@ -102,6 +102,60 @@ def atomic(path, obj):
         temporary.unlink(missing_ok=True)
 
 
+def cgroups_sample(meta, now):
+    result = health.run(['/usr/bin/stat', '-fc', '%T', '/sys/fs/cgroup/'], timeout=5)
+    root_fs = result.stdout.strip()
+    if result.returncode or not re.fullmatch(r'[a-zA-Z0-9_.-]{1,32}', root_fs):
+        raise RuntimeError('cgroups_stat_failed')
+
+    def label(path):
+        try:
+            with path.open() as stream:
+                value = stream.read(129).strip()
+        except (OSError, ValueError):
+            return 'sin_dato'
+        return value if re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}', value) else 'sin_dato'
+
+    modules = Path('/sys/module')
+    module = next((name for name in ('kmodlve', 'lve') if (modules / name).is_dir()), None)
+    mode = {'cgroup2fs': 'v2', 'tmpfs': 'no_unificado', 'cgroupfs': 'no_unificado'}
+    return {'dt': now.isoformat(), 'name': 'duplika_cloudlinux_cgroups_info',
+        'gauge': {'value': 1}, 'tags': {'host': meta['target']['host'],
+        'mode': mode.get(root_fs, 'desconocido'), 'root_fs': root_fs,
+        'lve_loaded': 'yes' if module else 'no', 'lve_module': module or 'sin_modulo',
+        'lve_version': label(modules / module / 'version') if module else 'sin_dato',
+        'kernel': os.uname().release, 'os_version': meta['capabilities']['os_version'],
+        'tuned_profile': label(Path('/etc/tuned/active_profile'))}}
+
+
+def cgroups_inventory(meta, uri, token, publish, now):
+    """Capture once per UTC calendar month; retry the same timestamp on delivery failure."""
+    receipt = STATE / 'cgroups-inventory.json'
+    period = now.strftime('%Y-%m')
+    status = {'cadence': 'monthly', 'period_utc': period, 'status': 'not_sampled'}
+    try:
+        try:
+            record = json.loads(read(receipt))
+        except FileNotFoundError:
+            record = {}
+        if record.get('period') != period:
+            if not publish:
+                return status
+            record = {'period': period, 'sample': cgroups_sample(meta, now), 'sent': False}
+            atomic(receipt, record)
+        status['observed_at'] = record['sample']['dt']
+        if publish and not record['sent']:
+            status['status'] = 'delivery_pending'
+            send(uri + 'metrics', token, [record['sample']])
+            atomic(receipt, dict(record, sent=True))
+            record['sent'] = True
+        status['status'] = 'sent' if record['sent'] else 'delivery_pending'
+    except (OSError, ValueError, RuntimeError, TypeError, KeyError, AttributeError):
+        if status['status'] != 'delivery_pending':
+            status['status'] = 'sample_unavailable'
+    return status
+
+
 def observer_health(meta):
     """Liveness and component health are independent observations."""
     result = {'heartbeat': 'invalid', 'status': 'unavailable', 'degraded_components': []}
@@ -210,6 +264,9 @@ def status(publish=False, quiet=False):
         event['monitoring_capabilities'] = meta['monitoring_capabilities']
     if meta.get('monitoring_policy'):
         event['monitoring_policy'] = meta['monitoring_policy']
+    if meta.get('cgroups_inventory') and meta['capabilities']['os_id'] == 'cloudlinux':
+        event['cgroups_inventory'] = cgroups_inventory(meta, uri, token, publish and not drift,
+                                                       datetime.datetime.now(datetime.timezone.utc))
     old = json.loads(read(STATE / 'last-send.json')) if (STATE / 'last-send.json').exists() else {}
     digest = hashlib.sha256(canonical(hashes)).hexdigest()
     stable = {key: value for key, value in event.items() if key != 'dt'}

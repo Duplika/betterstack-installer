@@ -1,8 +1,17 @@
-# Operación actual: candidata rc36
+# Operación actual: candidata rc37
+
+El upgrade normal conserva la política instalada. En CloudLinux, la identidad
+publica `duplika_cloudlinux_cgroups_info` al actualizar y después en el primer
+ciclo horario de cada mes UTC. Comprobar el estado local en `verify` y la fila
+del servidor en Better Stack. Un fallo de muestreo o de envío se vuelve a
+intentar en el siguiente ciclo y queda visible en `cgroups_inventory`.
+La medición no confirma que el servidor sea apto para cambiar de jerarquía.
+
+## Base esencial común
 
 Para la base común usar `--base-monitoring` y seguir el [README](../README.md).
 Las altas nuevas compatibles usan configure/credential, preflight e install
-con el mismo instalador rc36 verificado; no instalar rc26 como paso intermedio.
+con el mismo instalador rc37 verificado; no instalar rc26 como paso intermedio.
 Las migraciones admitidas son observer-v4 rc34 esencial con almacenamiento
 o los transportes mínimos heredados rc35 revisados. No forzar otros layouts.
 
