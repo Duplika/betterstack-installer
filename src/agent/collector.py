@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc37'
+COLLECTOR_RELEASE = '4.0.0-rc38'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -876,9 +876,7 @@ def pressure_rows(data):
     return result
 
 
-def query_pressure(profile, now):
-    if profile.get('capabilities', {}).get('lve_status') in ('not_supported', 'not_applicable'):
-        return None
+def statistics_executable():
     tool = shutil.which('cloudlinux-statistics', path='/usr/sbin:/usr/bin:/sbin:/bin')
     if not tool:
         raise RuntimeError('pressure:tool_unavailable')
@@ -887,6 +885,13 @@ def query_pressure(profile, now):
         info = item.stat()
         if info.st_uid != 0 or info.st_mode & 0o022:
             raise RuntimeError('pressure:unsafe_executable')
+    return tool
+
+
+def query_pressure(profile, now):
+    if profile.get('capabilities', {}).get('lve_status') in ('not_supported', 'not_applicable'):
+        return None
+    tool = statistics_executable()
     start, end = pressure_window(now)
     stamp = lambda value: dt.datetime.fromtimestamp(value, dt.timezone.utc).strftime('%Y-%m-%d %H:%M')
     args = [tool, '--json', '--from', stamp(start), '--to', stamp(end),
@@ -928,6 +933,93 @@ def collect_pressure(out, state, profile, now):
     out.metric('duplika_lve_history_sample_interval_seconds', PRESSURE_INTERVAL)
     out.metric('duplika_lve_history_sample_failed', int(entry.get('failed', True)))
     return 'failed' if entry.get('failed', True) else entry.get('status', 'unknown')
+
+
+
+DAILY_LVE_RESOURCES = PRESSURE_RESOURCES + ('vmem',)
+DAILY_LVE_ZONE = dt.timezone(dt.timedelta(hours=-3))
+
+
+def daily_lve_rows(data):
+    if not isinstance(data, dict) or data.get('result') != 'success' or not isinstance(data.get('users'), list):
+        raise RuntimeError('lve_daily:invalid_response')
+    if len(data['users']) > 10000:
+        raise RuntimeError('lve_daily:result_limit')
+    accounts, skipped = {}, 0
+    for row in data['users']:
+        user = row.get('username') if isinstance(row, dict) else None
+        if user == 'N/A':
+            skipped += 1
+            continue
+        if not isinstance(user, str) or not USER.fullmatch(user) or user.lower() in accounts:
+            raise RuntimeError('lve_daily:invalid_account')
+        faults = row.get('faults')
+        if not isinstance(faults, dict):
+            raise RuntimeError('lve_daily:missing_faults')
+        resources = {}
+        for resource in DAILY_LVE_RESOURCES:
+            section = faults.get(resource)
+            if section is None:
+                continue
+            value = section.get('lve') if isinstance(section, dict) else None
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0 or int(value) != value:
+                raise RuntimeError('lve_daily:invalid_fault')
+            detail = {'faults': int(value)}
+            for source, dest in (('usage', 'usage_average'), ('limits', 'limit')):
+                values = row.get(source) or {}
+                metric = values.get(resource) if isinstance(values, dict) else None
+                measured = number(metric.get('lve')) if isinstance(metric, dict) else None
+                if measured is not None and measured >= 0:
+                    detail[dest] = measured
+            resources[resource] = detail
+        if not resources:
+            raise RuntimeError('lve_daily:missing_resources')
+        domain, owner = row.get('domain'), row.get('reseller')
+        accounts[user.lower()] = {
+            'user': user,
+            'domain': domain if isinstance(domain, str) and len(domain) <= 253 and DOMAIN.fullmatch(domain.lower()) else '',
+            'owner': owner if isinstance(owner, str) and USER.fullmatch(owner) else '',
+            'resources': resources,
+        }
+    return [accounts[key] for key in sorted(accounts)], skipped
+
+
+def collect_daily_lve(out, state, profile, now):
+    if profile.get('capabilities', {}).get('lve_status') != 'available':
+        return 'not_supported'
+    local = dt.datetime.fromtimestamp(now, DAILY_LVE_ZONE)
+    today = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    if local - today < dt.timedelta(minutes=20):
+        return 'waiting'
+    start = today - dt.timedelta(days=1)
+    day = start.date().isoformat()
+    entry = state.setdefault('daily_lve_v38', {})
+    if entry.get('day', '') >= day:
+        return 'available'
+    if 0 <= now - entry.get('attempt_at', 0) < 900:
+        return 'retry_pending'
+    entry['attempt_at'] = now
+    try:
+        tool = statistics_executable()
+        args = [tool, '--json', '--from', start.astimezone(dt.timezone.utc).strftime('%Y-%m-%d %H:%M'),
+                '--to', today.astimezone(dt.timezone.utc).strftime('%Y-%m-%d %H:%M'), '--limit=0', '--show=all']
+        rows, skipped = daily_lve_rows(json.loads(command(args, timeout=18, utc=True)))
+        report_id = str(int(now * 1000000))
+        report = dict(report_date=day, report_id=report_id, report_schema=1,
+                      window_start=int(start.timestamp()), window_end=int(today.timestamp()))
+        for row in rows:
+            out.log('account_resource_daily', **report, **row)
+        out.log('account_resource_daily_complete', **report, account_count=len(rows), skipped_placeholders=skipped)
+        entry['day'] = day
+        return 'available'
+    except Exception as error:
+        diagnostic = error_diagnostic(error)
+        if str(error) in ('lve_daily:invalid_response', 'lve_daily:result_limit', 'lve_daily:invalid_account',
+                          'lve_daily:missing_faults', 'lve_daily:invalid_fault', 'lve_daily:missing_resources'):
+            diagnostic['reason'] = str(error)
+        out.log('collector_error', component='lve_daily', **diagnostic, level='warning')
+        # The pilot should not interrupt the normal collector or its health.
+        return 'retry_pending'
 
 
 def essential_inventory(state):
@@ -1004,6 +1096,11 @@ def main_essential(profile, state, out, started):
         out.metric('duplika_cpanel_accounts', len(accounts))
         out.metric('duplika_cpanel_domains', len(domains))
         state['inventory_sent_at_v27'] = now
+    # The daily query shares the existing observer, but not a cycle that has
+    # just queried the 15-minute pressure window. Keep its service budget bounded.
+    pressure_attempt = state.get('pressure_v27', {}).get('attempt_at', 0)
+    if now - pressure_attempt >= 45 and time.monotonic() - started < 12:
+        components['lve_daily'] = collect_daily_lve(out, state, profile, now)
     import resource
     usage, children = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
     duration = time.monotonic() - started
