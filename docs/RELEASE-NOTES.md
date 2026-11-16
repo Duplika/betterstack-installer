@@ -1,3 +1,12 @@
+# 4.0.0-rc39 — candidata: cierre LVE filtrado
+
+- Publica cuentas con más de 20 faults sumados. Conserva el cierre con cero
+  casos, el contador de cuentas evaluadas y el umbral de publicación.
+- La consulta tiene 45 segundos. Se difiere en ciclos ocupados y conserva
+  el último estado del cierre entre pasadas para reducir logs repetidos.
+- Valida rc38 original o la variante filtrada revisada por hash, además de
+  comprobar el manifiesto completo. Conserva el día ya procesado y Vector.
+
 # 4.0.0-rc37 — candidata: inventario mensual de cgroups
 
 - CloudLinux registra la jerarquía activa, el módulo LVE, TuneD y el kernel

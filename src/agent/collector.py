@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc38'
+COLLECTOR_RELEASE = '4.0.0-rc39'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -938,6 +938,9 @@ def collect_pressure(out, state, profile, now):
 
 DAILY_LVE_RESOURCES = PRESSURE_RESOURCES + ('vmem',)
 DAILY_LVE_ZONE = dt.timezone(dt.timedelta(hours=-3))
+DAILY_LVE_TIMEOUT_SECONDS = 45
+DAILY_LVE_FAULT_THRESHOLD = 20
+DAILY_LVE_START_BUDGET_SECONDS = 8
 
 
 def daily_lve_rows(data):
@@ -1002,14 +1005,21 @@ def collect_daily_lve(out, state, profile, now):
     try:
         tool = statistics_executable()
         args = [tool, '--json', '--from', start.astimezone(dt.timezone.utc).strftime('%Y-%m-%d %H:%M'),
-                '--to', today.astimezone(dt.timezone.utc).strftime('%Y-%m-%d %H:%M'), '--limit=0', '--show=all']
-        rows, skipped = daily_lve_rows(json.loads(command(args, timeout=18, utc=True)))
+                '--to', today.astimezone(dt.timezone.utc).strftime('%Y-%m-%d %H:%M'), '--limit=0', '--show', 'all']
+        rows, skipped = daily_lve_rows(json.loads(
+            command(args, timeout=DAILY_LVE_TIMEOUT_SECONDS, utc=True)))
         report_id = str(int(now * 1000000))
         report = dict(report_date=day, report_id=report_id, report_schema=1,
                       window_start=int(start.timestamp()), window_end=int(today.timestamp()))
+        published = 0
         for row in rows:
-            out.log('account_resource_daily', **report, **row)
-        out.log('account_resource_daily_complete', **report, account_count=len(rows), skipped_placeholders=skipped)
+            faults = sum(resource['faults'] for resource in row['resources'].values())
+            if faults > DAILY_LVE_FAULT_THRESHOLD:
+                out.log('account_resource_daily', **report, **row)
+                published += 1
+        out.log('account_resource_daily_complete', **report, account_count=published,
+                evaluated_account_count=len(rows), fault_threshold=DAILY_LVE_FAULT_THRESHOLD,
+                skipped_placeholders=skipped)
         entry['day'] = day
         return 'available'
     except Exception as error:
@@ -1020,6 +1030,15 @@ def collect_daily_lve(out, state, profile, now):
         out.log('collector_error', component='lve_daily', **diagnostic, level='warning')
         # The pilot should not interrupt the normal collector or its health.
         return 'retry_pending'
+
+
+def scheduled_daily_lve(out, state, profile, now, elapsed):
+    entry = state.setdefault('daily_lve_v38', {})
+    pressure_attempt = state.get('pressure_v27', {}).get('attempt_at', 0)
+    if now - pressure_attempt >= 45 and elapsed < DAILY_LVE_START_BUDGET_SECONDS:
+        entry['status'] = collect_daily_lve(out, state, profile, now)
+    # Skipping a busy cycle does not represent a state change.
+    return entry.get('status')
 
 
 def essential_inventory(state):
@@ -1098,9 +1117,9 @@ def main_essential(profile, state, out, started):
         state['inventory_sent_at_v27'] = now
     # The daily query shares the existing observer, but not a cycle that has
     # just queried the 15-minute pressure window. Keep its service budget bounded.
-    pressure_attempt = state.get('pressure_v27', {}).get('attempt_at', 0)
-    if now - pressure_attempt >= 45 and time.monotonic() - started < 12:
-        components['lve_daily'] = collect_daily_lve(out, state, profile, now)
+    daily_status = scheduled_daily_lve(out, state, profile, now, time.monotonic() - started)
+    if daily_status is not None:
+        components['lve_daily'] = daily_status
     import resource
     usage, children = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
     duration = time.monotonic() - started

@@ -1,17 +1,23 @@
-# Better Stack installer — candidata rc38
+# Better Stack installer — candidata rc39
 
 ## Resumen diario de CloudLinux LVE
 
-El observador esencial ejecuta una consulta nativa por día cerrado, sin filtro
-de faults, con corte de Buenos Aires y a partir de las 00:20. Publica logs
-estructurados por cuenta y un registro de completitud. Mantiene las ventanas
-de diagnóstico existentes. La consulta diaria usa el mismo timer y evita
-coincidir con la consulta de presión de 15 minutos. Una consulta fallida
-reintenta con intervalo mínimo de 15 minutos y conserva la señal de diagnóstico.
+El observador esencial consulta el día anterior de Buenos Aires a partir de
+las 00:20. Publica sólo cuentas con más de 20 faults sumados y emite un cierre
+incluso si publica cero. El cierre incluye cuentas evaluadas, publicadas,
+umbral y descartes. El informe administrativo aplica su propio criterio
+por recurso.
 
-Para una instalación revisada rc37 con el observador esencial, usar
-`preflight`, `upgrade` y `verify` con el instalador rc38. Validar primero la
-recepción de `account_resource_daily_complete` y sus filas en Better Stack.
+La consulta tiene un máximo de 45 segundos. Se difiere cuando el ciclo está
+ocupado o acaba de consultar la presión de 15 minutos, y los fallos reintentan
+con intervalo mínimo de 15 minutos. Entre ciclos se conserva el último estado
+del cierre para evitar logs de estado repetidos. Las métricas de salud siguen
+en cada ciclo.
+
+`preflight`, `upgrade` y `verify` aceptan rc38 original y la variante filtrada
+revisada si su manifiesto coincide. Se conservan el estado del cierre diario,
+la política existente y el transporte. Confirmá la recepción del cierre y
+sus filas en Better Stack antes de extender el piloto.
 
 ## Inventario mensual de cgroups en CloudLinux
 
