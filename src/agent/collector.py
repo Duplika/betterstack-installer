@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc39'
+COLLECTOR_RELEASE = '4.0.0-rc40'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -760,28 +760,131 @@ def collect_errors(out, state, domains, profile):
     state['error_files'] = positions
 
 
+KERNEL_OOM_WINDOW = 300
+KERNEL_OOM_GRACE = 60
+
+
+def record_kernel_event(out, state, record, now):
+    message = record.get('MESSAGE', '')
+    if not isinstance(message, str):
+        return
+    if re.search(r'(?i)(segfault|general protection fault)', message):
+        out.log('kernel_event', error_type='native_crash', level='error')
+        return
+    if re.search(r'(?i)(I/O error|blk_update_request|blocked for more than)', message):
+        out.log('kernel_event', error_type='disk_or_kernel_stall', level='error')
+        return
+
+    try:
+        at = int(record.get('__REALTIME_TIMESTAMP', '')) // 1000000
+    except (TypeError, ValueError):
+        at = now
+    memory = state.setdefault('kernel_oom_v1', {'windows': {}, 'victims': {}})
+    victims = memory['victims']
+    primary = re.search(r'\boom-kill:constraint=([A-Z_]+)', message)
+    killed = re.search(r'\bkilled process\s+(\d+)\s+\(([^)]+)\)', message, re.I)
+    group = task = pid = None
+    if primary:
+        group = re.search(r'(?:^|,)oom_memcg=([^,]+)', message)
+        task = re.search(r'(?:^|,)task=([^,]+)', message)
+        pid = re.search(r'(?:^|,)pid=(\d+)(?:,|$)', message)
+        lve = re.search(r'(?:^|/)lve(\d+)(?:/|$)', group[1]) if group else None
+        if primary[1] != 'CONSTRAINT_MEMCG' or not lve:
+            out.log('kernel_event', error_type='oom', oom_events=1, killed_processes=0,
+                    oom_constraint=primary[1], level='error')
+            return
+        lve_id = int(lve[1])
+        process = task[1][:64] if task else 'unknown'
+        window = at - at % KERNEL_OOM_WINDOW
+        key = f'{window}:{lve_id}:{process}'
+        limits = memory['windows'].setdefault(key, {
+            'window_start': window, 'lve_id': lve_id, 'process': process,
+            'oom_events': 0, 'killed_processes': 0, 'first_seen': at, 'last_seen': at,
+        })
+        limits['oom_events'] += 1
+        limits['first_seen'] = min(limits['first_seen'], at)
+        limits['last_seen'] = max(limits['last_seen'], at)
+        if pid:
+            victims[pid[1]] = [key, at]
+    elif killed:
+        previous = victims.pop(killed[1], None)
+        if previous and 0 <= at - previous[1] <= KERNEL_OOM_GRACE and previous[0] in memory['windows']:
+            limits = memory['windows'][previous[0]]
+            limits['killed_processes'] += 1
+            limits['last_seen'] = max(limits['last_seen'], at)
+        else:
+            out.log('kernel_event', error_type='oom', oom_events=0, killed_processes=1,
+                    process=killed[2][:64], level='error')
+    elif re.search(r'(?i)out of memory', message):
+        out.log('kernel_event', error_type='oom', oom_context=True, level='error')
+
+
+def flush_kernel_oom(out, state, now):
+    memory = state.get('kernel_oom_v1')
+    if not memory:
+        return
+    windows = memory['windows']
+    for key, summary in list(windows.items()):
+        if now >= summary['window_start'] + KERNEL_OOM_WINDOW + KERNEL_OOM_GRACE:
+            out.log('kernel_event', error_type='oom', **summary, level='error')
+            del windows[key]
+    for pid, (key, at) in list(memory['victims'].items()):
+        if key not in windows or now - at > KERNEL_OOM_GRACE:
+            del memory['victims'][pid]
+
+
+KERNEL_JOURNAL_BATCH = 500
+
+
+def read_kernel_batch(args):
+    # systemd 239 can stream forward from a cursor without a tail limit.
+    with subprocess.Popen(args, stdout=subprocess.PIPE) as journal:
+        try:
+            with subprocess.Popen(['/usr/bin/head', '-n', str(KERNEL_JOURNAL_BATCH + 1)],
+                                  stdin=journal.stdout, stdout=subprocess.PIPE) as head:
+                journal.stdout.close()
+                try:
+                    raw, _ = head.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    head.kill()
+                    raise
+                if head.returncode:
+                    raise subprocess.CalledProcessError(head.returncode, head.args)
+            lines = raw.splitlines()
+            if len(lines) > KERNEL_JOURNAL_BATCH:
+                return lines[:KERNEL_JOURNAL_BATCH], True
+            result = journal.wait(timeout=1)
+            if result:
+                raise subprocess.CalledProcessError(result, args)
+            return lines, False
+        finally:
+            if journal.poll() is None:
+                journal.kill()
+
+
 def collect_kernel(out, state):
     now = int(time.time())
     since = max(now - 120, int(state.get('journal_at', now - 60)))
     previous_cursor = state.get('journal_cursor')
-    args = ['/usr/bin/journalctl', '--no-pager', '-k', '-o', 'json', '-n', '200', '--until', '@' + str(now)]
+    args = ['/usr/bin/journalctl', '--no-pager', '-k', '-o', 'json',
+            '--output-fields=MESSAGE', '--until', '@' + str(now)]
     args += ['--after-cursor', previous_cursor] if previous_cursor else ['--since', '@' + str(since)]
-    raw = command(args, timeout=5)
-    for line in raw.splitlines():
+    lines, backlog = read_kernel_batch(args)
+    watermark = since
+    for line in lines:
         record = json.loads(line)
         cursor = record.get('__CURSOR')
-        if cursor == previous_cursor:
+        if not cursor or cursor == previous_cursor:
             continue
-        message = str(record.get('MESSAGE', ''))
-        kind = None
-        if re.search(r'(?i)(oom-kill|out of memory|killed process)', message): kind = 'oom'
-        elif re.search(r'(?i)(segfault|general protection fault)', message): kind = 'native_crash'
-        elif re.search(r'(?i)(I/O error|blk_update_request|blocked for more than)', message): kind = 'disk_or_kernel_stall'
-        if kind:
-            out.log('kernel_event', error_type=kind, level='error')
+        record_kernel_event(out, state, record, now)
         state['journal_cursor'] = cursor
+        try:
+            watermark = int(record['__REALTIME_TIMESTAMP']) // 1000000
+        except (KeyError, TypeError, ValueError):
+            pass
+    # Keep windows open while more entries from the same time can still arrive.
+    flush_kernel_oom(out, state, watermark if backlog else now)
     state['journal_at'] = now
-
 
 
 def collect_wordpress(out, state, profile):
@@ -1033,6 +1136,8 @@ def collect_daily_lve(out, state, profile, now):
 
 
 def scheduled_daily_lve(out, state, profile, now, elapsed):
+    if profile.get('daily_lve_external') and Path('/etc/cron.d/duplika-lve-daily').is_file():
+        return 'external_cron'
     entry = state.setdefault('daily_lve_v38', {})
     pressure_attempt = state.get('pressure_v27', {}).get('attempt_at', 0)
     if now - pressure_attempt >= 45 and elapsed < DAILY_LVE_START_BUDGET_SECONDS:

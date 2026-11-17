@@ -723,6 +723,7 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc36'] = 'upgrade_rc36.json'
     reviewed_versions['4.0.0-rc37'] = 'upgrade_rc37.json'
     reviewed_versions['4.0.0-rc38'] = 'upgrade_rc38.json'
+    reviewed_versions['4.0.0-rc39'] = 'upgrade_rc39.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -740,7 +741,7 @@ def validate_v4_upgrade(target, caps):
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38')
+    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -757,6 +758,8 @@ def validate_v4_upgrade(target, caps):
         reviewed['duplika-storage-observer.timer'] = hashlib.sha256(STORAGE_TIMER.encode()).hexdigest()
     for path in [CLOUD / 'collector.py'] + (storage_paths() if had_storage else []):
         approved = {reviewed[path.name]}
+        if previous == '4.0.0-rc37' and path == CLOUD / 'collector.py':
+            approved.update(reviewed['collector_pilot_sha256'])
         if previous == '4.0.0-rc38' and path == CLOUD / 'collector.py':
             approved.add(reviewed['collector_filter_pilot_sha256'])
         if hashlib.sha256(identity.read(path)).hexdigest() not in approved:
@@ -817,18 +820,51 @@ def verify_new_observer_cycle(started_after):
         raise RuntimeError('upgrade:new_observer_cycle_marker_missing') from None
     if (health.get('agent_version') != VERSION or health.get('started_at', 0) < started_after
             or not 0 <= time.time() - health.get('at', 0) < 180
-            or not {'processes', 'lve', 'access'}.issubset(health.get('components', {}))
+            or not {'processes', 'lve', 'access', 'kernel'}.issubset(health.get('components', {}))
             or 'failed' in health.get('components', {}).values()):
         raise RuntimeError('upgrade:new_observer_cycle_not_verified')
+
+
+DAILY_LVE_CRON = Path('/etc/cron.d/duplika-lve-daily')
+DAILY_LVE_SCRIPT = Path('/usr/local/sbin/duplika-lve-daily')
+DAILY_LVE_SCRIPT_SHA256 = '3998e1bd1cb77187a870d76f65892b8f4c1b9505ff98d77b3ea64fcd44aaddf2'
+
+
+def external_lve_cron(target, caps):
+    host = target['host']
+    if caps.get('os_id') != 'cloudlinux' or not host.endswith('.duplika.com'):
+        return None
+    if not DAILY_LVE_CRON.exists() and not DAILY_LVE_CRON.is_symlink():
+        return None
+    original = identity.read(DAILY_LVE_CRON)
+    # Only correct the reviewed independent daily job. A customized job needs
+    # an explicit review before either publisher is selected.
+    if hashlib.sha256(identity.read(DAILY_LVE_SCRIPT)).hexdigest() != DAILY_LVE_SCRIPT_SHA256:
+        raise RuntimeError('upgrade:unreviewed_lve_daily_script')
+    prefix = b'CRON_TZ=America/Argentina/Buenos_Aires\n'
+    command = (b'23,38,53 0 * * * root /usr/bin/systemd-run --quiet --wait --pipe --collect '
+               b'-p CPUQuota=10% -p Nice=15 -p IOSchedulingClass=idle -p MemoryMax=256M '
+               b'-p NoNewPrivileges=yes -p RuntimeMaxSec=135 /usr/bin/python3 '
+               b'/usr/local/sbin/duplika-lve-daily ' + host.encode() + b'\n')
+    expected = prefix + command
+    corrected = prefix + command.replace(b'CPUQuota=10%', br'CPUQuota=10\%')
+    if original not in (expected, corrected):
+        raise RuntimeError('upgrade:unreviewed_lve_daily_cron')
+    return original, corrected
 
 
 def upgrade_v4(target, caps):
     old = validate_v4_upgrade(target, caps)
     identity.status(quiet=True)  # Must be healthy before any write or service change.
+    cron = external_lve_cron(target, caps)
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39')
+    if not refresh_observer:
+        cron = None
+    if cron is not None and cron[0] != cron[1]:
+        paths.append(DAILY_LVE_CRON)
     observer_timer = 'duplika-cloudlinux-observer.timer'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
@@ -853,6 +889,14 @@ def upgrade_v4(target, caps):
                     raise RuntimeError('upgrade:v4_changed_while_waiting')
                 profile = load(CLOUD / 'profile.json')
                 validate_observer_profile(old, profile)
+                if cron is not None:
+                    if identity.read(DAILY_LVE_CRON) != cron[0]:
+                        raise RuntimeError('upgrade:lve_cron_changed')
+                    if cron[0] != cron[1]:
+                        write(DAILY_LVE_CRON, cron[1], DAILY_LVE_CRON.stat().st_mode & 0o777)
+                        if trusted_executable('restorecon'):
+                            execute(['restorecon', '-F', str(DAILY_LVE_CRON)])
+                    profile['daily_lve_external'] = True
                 first_cycle_after = time.time()
                 write(CLOUD / 'collector.py', (HERE / 'collector.py').read_bytes(), 0o700)
                 profile['agent_version'] = VERSION
@@ -868,6 +912,8 @@ def upgrade_v4(target, caps):
             [name for name in old['services'] if name not in (NAME + '.timer', 'duplika-storage-observer.timer')],
             [name for name in old['oneshots'] if name != 'duplika-storage-observer.service'], observer_base_paths(), old['vector_binary'], old['pipeline_variant'], old.get('migration_review'), storage_enabled=add_storage or had_storage, storage_preserved=had_storage)
 
+    if cron is not None:
+        print('Cierre LVE diario: cron independiente validado.')
 
 def upgrade(target, caps, simplify_context=False, aggregate_errors=False):
     if (BASE / 'complete').exists():
@@ -1178,7 +1224,9 @@ def main():
                 raise RuntimeError('cleanup:requires_reviewed_context_v3')
             previous = load(BASE / 'manifest.json')['agent_version']
             if previous != VERSION:
-                validate_v4_upgrade(target, caps)
+                old = validate_v4_upgrade(target, caps)
+                if old.get('pipeline_variant') == 'observer-v4':
+                    external_lve_cron(target, caps)
                 identity.status(quiet=True)
             else:
                 validate_current(target, caps)
