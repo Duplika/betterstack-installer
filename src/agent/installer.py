@@ -378,10 +378,9 @@ def enable_storage():
             execute(['restorecon', '-F', *map(str, paths)])
         execute(['systemd-analyze', 'verify', str(paths[1]), str(paths[2])])
         execute(['systemctl', 'daemon-reload'])
+        first_cycle_after = time.time()
         execute(['systemctl', 'start', 'duplika-storage-observer.service'])
-        health = load(CLOUD_DATA / 'private/storage-health.json')
-        if not 0 <= time.time() - health.get('at', 0) < 180 or health.get('probe_failures') != 0:
-            raise RuntimeError('storage:first_cycle_not_healthy')
+        verify_new_storage_cycle(first_cycle_after)
         execute(['systemctl', 'enable', '--now', 'duplika-storage-observer.timer'])
     except BaseException as error:
         recover_failure(transaction, error)
@@ -724,6 +723,7 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc37'] = 'upgrade_rc37.json'
     reviewed_versions['4.0.0-rc38'] = 'upgrade_rc38.json'
     reviewed_versions['4.0.0-rc39'] = 'upgrade_rc39.json'
+    reviewed_versions['4.0.0-rc40'] = 'upgrade_rc40.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -741,7 +741,7 @@ def validate_v4_upgrade(target, caps):
         return legacy_upgrade.validate(sys.modules[__name__], old, target)
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39')
+    had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -756,13 +756,21 @@ def validate_v4_upgrade(target, caps):
     if had_storage:
         reviewed['duplika-storage-observer.service'] = hashlib.sha256(STORAGE_SERVICE.replace('__PYTHON__', sys.executable).encode()).hexdigest()
         reviewed['duplika-storage-observer.timer'] = hashlib.sha256(STORAGE_TIMER.encode()).hexdigest()
-    for path in [CLOUD / 'collector.py'] + (storage_paths() if had_storage else []):
-        approved = {reviewed[path.name]}
-        if previous == '4.0.0-rc37' and path == CLOUD / 'collector.py':
+    observed = {path.name: hashlib.sha256(identity.read(path)).hexdigest()
+                for path in [CLOUD / 'collector.py', *(storage_paths() if had_storage else [])]}
+    # The telemetry pilot installed both files together. Approve the reviewed
+    # pair without accepting either experimental file in isolation.
+    pilot = reviewed.get('telemetry_pilot')
+    approved_pilot = bool(pilot) and all(observed.get(name) == digest for name, digest in pilot.items())
+    for name, digest in observed.items():
+        approved = {reviewed[name]}
+        if previous == '4.0.0-rc37' and name == 'collector.py':
             approved.update(reviewed['collector_pilot_sha256'])
-        if previous == '4.0.0-rc38' and path == CLOUD / 'collector.py':
+        if previous == '4.0.0-rc38' and name == 'collector.py':
             approved.add(reviewed['collector_filter_pilot_sha256'])
-        if hashlib.sha256(identity.read(path)).hexdigest() not in approved:
+        if approved_pilot and name in pilot:
+            approved.add(pilot[name])
+        if digest not in approved:
             raise RuntimeError('upgrade:unreviewed_v4_runtime')
     if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
         raise RuntimeError('upgrade:v4_drift')
@@ -775,9 +783,9 @@ def validate_v4_upgrade(target, caps):
 
 
 @contextlib.contextmanager
-def observer_quiet_point(timeout=60):
+def observer_quiet_point(timeout=60, *, name='collector'):
     """Wait for the current cycle to finish writing; never kill it midway."""
-    path = CLOUD_DATA / 'private/collector.lock'
+    path = CLOUD_DATA / 'private' / (name + '.lock')
     identity.read(path)  # Existing root-owned regular file and safe parents.
     fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
     try:
@@ -795,11 +803,11 @@ def observer_quiet_point(timeout=60):
         os.close(fd)
 
 
-def wait_observer_inactive(timeout=60):
+def wait_observer_inactive(timeout=60, *, service='duplika-cloudlinux-observer.service'):
     """A released process lock does not mean systemd finished the old oneshot job."""
     deadline = time.monotonic() + timeout
     while True:
-        result = run(['systemctl', 'show', 'duplika-cloudlinux-observer.service',
+        result = run(['systemctl', 'show', service,
                       '-p', 'ActiveState', '--value'])
         state = result.stdout.strip() if result.returncode == 0 else ''
         if state == 'inactive':
@@ -823,6 +831,16 @@ def verify_new_observer_cycle(started_after):
             or not {'processes', 'lve', 'access', 'kernel'}.issubset(health.get('components', {}))
             or 'failed' in health.get('components', {}).values()):
         raise RuntimeError('upgrade:new_observer_cycle_not_verified')
+
+
+def verify_new_storage_cycle(started_after):
+    try:
+        health = load(CLOUD_DATA / 'private/storage-health.json')
+    except FileNotFoundError:
+        raise RuntimeError('storage:first_cycle_not_healthy') from None
+    observed_at = health.get('at', 0)
+    if observed_at < started_after or not 0 <= time.time() - observed_at < 180 or health.get('probe_failures') != 0:
+        raise RuntimeError('storage:first_cycle_not_healthy')
 
 
 DAILY_LVE_CRON = Path('/etc/cron.d/duplika-lve-daily')
@@ -860,31 +878,39 @@ def upgrade_v4(target, caps):
     paths = [*runtime_files(), BASE / 'manifest.json', BASE / 'complete',
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
-    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40')
     if not refresh_observer:
         cron = None
     if cron is not None and cron[0] != cron[1]:
         paths.append(DAILY_LVE_CRON)
     observer_timer = 'duplika-cloudlinux-observer.timer'
+    storage_timer = 'duplika-storage-observer.timer'
+    storage_service = 'duplika-storage-observer.service'
     services = [NAME + '.timer', NAME + '.service']
     if refresh_observer:
         paths += [CLOUD / 'collector.py', CLOUD / 'profile.json']
         services.append(observer_timer)
     add_storage = refresh_observer and not old.get('storage_observer')
     had_storage = bool(old.get('storage_observer'))
+    refresh_storage = refresh_observer and had_storage
+    if refresh_storage:
+        paths.append(CLOUD / 'storage.py')
+        services.append(storage_timer)
     if add_storage:
         paths += storage_paths()
-    if add_storage:
-        services_to_restore = services + ['duplika-storage-observer.timer', 'duplika-storage-observer.service']
-    else:
-        services_to_restore = services
+    services_to_restore = [*services, *([storage_timer] if add_storage else []),
+                           *([storage_service] if add_storage or refresh_storage else [])]
     with upgrade_transaction(paths, services_to_restore, target, caps):
         execute(['systemctl', 'stop', *services])
         if refresh_observer:
             # Stopping a timer does not finish an already queued oneshot. Let
             # that job acquire its own nonblocking lock before we acquire it.
             wait_observer_inactive()
-            with observer_quiet_point():
+            if refresh_storage:
+                wait_observer_inactive(service=storage_service)
+            with observer_quiet_point(), contextlib.ExitStack() as locks:
+                if refresh_storage:
+                    locks.enter_context(observer_quiet_point(name='storage'))
                 if identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
                     raise RuntimeError('upgrade:v4_changed_while_waiting')
                 profile = load(CLOUD / 'profile.json')
@@ -903,10 +929,21 @@ def upgrade_v4(target, caps):
                 write(CLOUD / 'profile.json', identity.canonical(profile))
                 if trusted_executable('restorecon'):
                     execute(['restorecon', '-F', str(CLOUD / 'collector.py'), str(CLOUD / 'profile.json')])
+                if refresh_storage:
+                    storage = CLOUD / 'storage.py'
+                    write(storage, (HERE / 'storage.py').read_bytes(), 0o700)
+                    if trusted_executable('restorecon'):
+                        execute(['restorecon', '-F', str(storage)])
             # Do not join an old job that has released its lock but is still exiting.
             wait_observer_inactive()
             execute(['systemctl', 'start', 'duplika-cloudlinux-observer.service'], timeout=60)
             verify_new_observer_cycle(first_cycle_after)
+            if refresh_storage:
+                wait_observer_inactive(service=storage_service)
+                storage_cycle_after = time.time()
+                execute(['systemctl', 'start', storage_service], timeout=60)
+                verify_new_storage_cycle(storage_cycle_after)
+                execute(['systemctl', 'start', storage_timer])
             execute(['systemctl', 'start', observer_timer])
         activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [name for name in old['services'] if name not in (NAME + '.timer', 'duplika-storage-observer.timer')],

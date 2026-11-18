@@ -82,7 +82,7 @@ sys.exit(2)
                 (i.CLOUD_DATA/'private/collector-health.json').write_text(json.dumps({
                     'at': time.time(), 'started_at': time.time(), 'agent_version': i.VERSION,
                     'monitoring_policy': 'essential-v1', 'components': {
-                        'lve': 'available', 'processes': 'disabled', 'access': 'disabled', 'disk_io': 'available'}}))
+                        'lve': 'available', 'processes': 'disabled', 'access': 'disabled', 'disk_io': 'available', 'kernel': None}}))
         with patch.object(i, 'run', side_effect=run), patch.object(i, 'execute', side_effect=execute), \
              patch.object(i, 'activate') as activate:
             e.migrate(i, self.meta['target'], {}, apply=True)

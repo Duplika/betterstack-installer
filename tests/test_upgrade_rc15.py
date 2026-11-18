@@ -78,28 +78,33 @@ class UpgradeTests(unittest.TestCase):
 
     def test_upgrade_preserves_transport_storage_and_checkpoint(self):
         checkpoint = i.CLOUD_DATA / 'private/checkpoint'; checkpoint.write_text('latest offset')
-        preserved = {p: p.read_bytes() for p in i.storage_paths() + [i.CLOUD / 'vector.json']}
+        preserved = {p: p.read_bytes() for p in i.storage_paths()[1:] + [i.CLOUD / 'vector.json']}
         calls = []
         def execute(args, **kwargs):
             calls.append(args)
             if args == ['systemctl', 'start', 'duplika-cloudlinux-observer.service']:
-                (i.CLOUD_DATA / 'private/collector-health.json').write_text(json.dumps({'at': time.time(), 'started_at': time.time(), 'agent_version': i.VERSION, 'components': {'lve': True, 'processes': 1, 'access': {}}}))
+                (i.CLOUD_DATA / 'private/collector-health.json').write_text(json.dumps({'at': time.time(), 'started_at': time.time(), 'agent_version': i.VERSION, 'components': {'lve': True, 'processes': 1, 'access': {}, 'kernel': None}}))
+            if args == ['systemctl', 'start', 'duplika-storage-observer.service']:
+                (i.CLOUD_DATA / 'private/storage-health.json').write_text(
+                    json.dumps({'at': time.time(), 'probe_failures': 0}))
         with patch.object(identity, 'status'), patch.object(i, 'execute', side_effect=execute), \
-             patch.object(i, 'observer_quiet_point', side_effect=lambda: contextlib.nullcontext()), \
+             patch.object(i, 'observer_quiet_point', side_effect=lambda **kwargs: contextlib.nullcontext()), \
              patch.object(i, 'backup', return_value={}), patch.object(i, 'activate') as activate:
             i.upgrade_v4(TARGET, {})
         self.assertTrue(activate.call_args.kwargs['storage_enabled'])
         self.assertTrue(activate.call_args.kwargs['storage_preserved'])
         self.assertEqual(checkpoint.read_text(), 'latest offset')
         for p, before in preserved.items(): self.assertEqual(p.read_bytes(), before)
-        self.assertFalse(any('duplika-betterstack-cloudlinux.service' in args or 'duplika-storage-observer.service' in args for args in calls))
+        self.assertFalse(any('duplika-betterstack-cloudlinux.service' in args for args in calls))
+        self.assertIn(['systemctl', 'start', 'duplika-storage-observer.service'], calls)
         self.assertEqual((i.CLOUD / 'collector.py').read_bytes(), (i.HERE / 'collector.py').read_bytes())
+        self.assertEqual((i.CLOUD / 'storage.py').read_bytes(), (i.HERE / 'storage.py').read_bytes())
 
     def test_failed_first_cycle_rolls_back_instead_of_accepting(self):
         def fail(args, **kwargs):
             if args == ['systemctl', 'start', 'duplika-cloudlinux-observer.service']: raise RuntimeError('probe failed')
         with patch.object(identity, 'status'), patch.object(i, 'execute', side_effect=fail), \
-             patch.object(i, 'observer_quiet_point', side_effect=lambda: contextlib.nullcontext()), \
+             patch.object(i, 'observer_quiet_point', side_effect=lambda **kwargs: contextlib.nullcontext()), \
              patch.object(i, 'backup', return_value={'fixture': True}), patch.object(i, 'recover_failure') as recover, \
              patch.object(i, 'activate') as activate:
             with self.assertRaisesRegex(RuntimeError, 'probe failed'): i.upgrade_v4(TARGET, {})
@@ -112,3 +117,41 @@ class Rc17UpgradeTests(UpgradeTests):
 
 class Rc18UpgradeTests(UpgradeTests):
     previous_version = "4.0.0-rc18"
+
+
+class Rc40UpgradeTests(UpgradeTests):
+    previous_version = "4.0.0-rc40"
+
+    def test_only_the_complete_reviewed_telemetry_pilot_is_accepted(self):
+        collector = i.CLOUD / 'collector.py'
+        storage = i.CLOUD / 'storage.py'
+        previous_collector = (i.HERE / 'collector.py').read_bytes().replace(
+            b"COLLECTOR_RELEASE = '4.0.0-rc41'", b"COLLECTOR_RELEASE = '4.0.0-rc40'")
+
+        def rebaseline():
+            self.meta['baseline'] = identity.snapshot(self.meta['critical_paths'], self.meta['config_path'])
+            (i.BASE / 'manifest.json').write_text(json.dumps(self.meta))
+
+        collector.write_bytes(previous_collector)
+        rebaseline()
+        with self.assertRaisesRegex(RuntimeError, 'unreviewed_v4_runtime'):
+            i.validate_v4_upgrade(TARGET, {})
+        storage.write_bytes((i.HERE / 'storage.py').read_bytes())
+        rebaseline()
+        self.assertEqual(i.validate_v4_upgrade(TARGET, {}), self.meta)
+
+    def test_stale_storage_cycle_interrupts_update_and_runs_rollback(self):
+        marker = i.CLOUD_DATA / 'private/storage-health.json'
+        marker.write_text(json.dumps({'at': time.time() - 60, 'probe_failures': 0}))
+        def execute(args, **kwargs):
+            if args == ['systemctl', 'start', 'duplika-cloudlinux-observer.service']:
+                (i.CLOUD_DATA / 'private/collector-health.json').write_text(json.dumps({
+                    'at': time.time(), 'started_at': time.time(), 'agent_version': i.VERSION,
+                    'components': {'lve': True, 'processes': 1, 'access': {}, 'kernel': None}}))
+        with patch.object(identity, 'status'), patch.object(i, 'execute', side_effect=execute), \
+             patch.object(i, 'observer_quiet_point', side_effect=lambda **kwargs: contextlib.nullcontext()), \
+             patch.object(i, 'recover_failure') as recover, patch.object(i, 'activate') as activate:
+            with self.assertRaisesRegex(RuntimeError, 'storage:first_cycle_not_healthy'):
+                i.upgrade_v4(TARGET, {})
+        self.assertIn(str(i.CLOUD / 'storage.py'), recover.call_args.args[0]['files'])
+        activate.assert_not_called()

@@ -43,6 +43,29 @@ class SamplingTests(unittest.TestCase):
 
 
 class IncidentTests(unittest.TestCase):
+    def test_lsapi_abort_summaries_preserve_account_counts_and_critical_errors(self):
+        domains = {'example.net': 'example', 'site.example.net': 'example'}
+        profile = dict(PROFILE, error_logs=['fixture'])
+        state = {}
+        line = b'Abort request processing by PID: 123 #APVH_'
+        def observe(now, lines):
+            out = c.Output(PROFILE, state, now=now)
+            with patch.object(c, 'read_tail', return_value=(lines, {}, {'bytes_read': 42, 'rotated': False})):
+                c.collect_errors(out, state, domains, profile)
+            return out.logs
+        logs = observe(900, [line + b'example.net', line + b'unknown.example.net',
+                             line + b'example.net out of memory', b'PHP Fatal error'])
+        self.assertCountEqual([row['error_type'] for row in logs],
+                              ['lsapi_abort', 'memory_allocation_failure', 'php_fatal'])
+        state = json.loads(json.dumps(state))
+        self.assertEqual(observe(960, [line + b'site.example.net']), [])
+        summary, = observe(1800, [])
+        self.assertEqual((summary['user'], summary['site'], summary['count'], summary['sample_pid']),
+                         ('example', '', 2, 123))
+        self.assertEqual(summary['coverage']['bytes_read'], 84)
+        self.assertTrue(summary['window_end'].endswith('00:30:00+00:00'))
+        self.assertEqual(observe(1860, []), [])
+
     def test_changing_process_counts_do_not_emit_routine_resource_logs(self):
         state = {}; logs = []
         for now in range(0, 1800, 60):

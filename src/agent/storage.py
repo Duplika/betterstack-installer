@@ -64,7 +64,7 @@ A CageFS alias never excludes the real device. Subvolumes share filesystem capac
     return sorted(result, key=lambda item: item['mountpoint'])
 
 
-def volume_values(item, statvfs=None):
+def volume_values(item, statvfs=None, include_capacity=True):
     if statvfs is not None:
         v = statvfs(item['mountpoint'])
     else:
@@ -76,11 +76,13 @@ def volume_values(item, statvfs=None):
             v = os.statvfs('/proc/self/fd/' + str(fd))
         finally:
             os.close(fd)
+    values = {'readonly': int(item['readonly'])}
+    if not include_capacity:
+        return values
     size = v.f_frsize or v.f_bsize
     total, free, available = v.f_blocks * size, v.f_bfree * size, max(0, v.f_bavail) * size
     used = max(0, total - free)
-    values = {'total_bytes': total, 'used_bytes': used, 'available_bytes': available,
-              'readonly': int(item['readonly'])}
+    values.update(total_bytes=total, used_bytes=used, available_bytes=available)
     # df-style ratio uses space available to non-root rather than reserved blocks.
     if used + available:
         values['used_ratio'] = used / (used + available)
@@ -247,15 +249,24 @@ def main():
         inventory = volumes(Path('/proc/1/mountinfo').read_text())
         if not inventory:
             raise RuntimeError('no_local_volumes_visible')
+        capacity_slot = int(now) // 300
+        previous_capacity = state.get('capacity_samples_v1', {})
+        capacity_samples = {}
         for item in inventory:
             tags = {k: item[k] for k in ('device', 'mountpoint', 'fstype')}
+            volume_key = json.dumps([item['device_id'], *tags.values()], separators=(',', ':'))
+            sampled = previous_capacity.get(volume_key) == capacity_slot
             try:
-                for key, value in volume_values(item).items():
+                for key, value in volume_values(item, include_capacity=not sampled).items():
                     out.metric('volume_' + key, value, **tags)
                 out.metric('volume_probe_ok', 1, **tags)
+                capacity_samples[volume_key] = capacity_slot
             except OSError:
                 failed.append(item['mountpoint'])
                 out.metric('volume_probe_ok', 0, **tags)
+                if sampled:
+                    capacity_samples[volume_key] = capacity_slot
+        state['capacity_samples_v1'] = capacity_samples
         mdstat = Path('/proc/mdstat')
         arrays = raid_arrays(mdstat.read_text()) if mdstat.exists() else []
         for item in arrays:

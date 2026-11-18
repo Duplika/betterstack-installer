@@ -9,5 +9,9 @@
   "collector_pilot_sha256": [
     "8ee75cd264983e8e9627d069591957587c5d4aa8d2f629912c4bdec0a63a3e32",
     "4eac830739069478fe091afb1bbe722fab5ed6fac10501b9c8924ca4e66e6818"
-  ]
+  ],
+  "telemetry_pilot": {
+    "collector.py": "e79f767a4f765f6ebc2dd8ec50009c48a17a8aff5ea08b60f20502b8325facb8",
+    "storage.py": "f6784d46141b3513b73b6d1deb8d68e9f4ecd55b79d5ab562c42d18c02d05158"
+  }
 }
