@@ -240,7 +240,10 @@ class Rc12UpgradeTests(CandidateUpgradeTests):
         if args == ['systemctl', 'start', 'duplika-cloudlinux-observer.service']:
             (installer.CLOUD_DATA / 'private/collector-health.json').write_text(json.dumps({
                 'at': __import__('time').time(), 'started_at': __import__('time').time(),
-                'agent_version': capabilities.VERSION, 'components': {'lve': True, 'processes': 1, 'access': {}}}))
+                'agent_version': capabilities.VERSION, 'components': {'lve': True, 'processes': 1, 'access': {}, 'kernel': None}}))
+        if args == ['systemctl', 'start', 'duplika-storage-observer.service']:
+            (installer.CLOUD_DATA / 'private/storage-health.json').write_text(
+                json.dumps({'at': __import__('time').time(), 'probe_failures': 0}))
         return types.SimpleNamespace(returncode=0, stdout='inactive')
 
     def test_reviewed_rc3_upgrade_preserves_transport_and_state(self):

@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc40'
+COLLECTOR_RELEASE = '4.0.0-rc41'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -727,6 +727,19 @@ def collect_access(out, state, domains, profile):
 
 def collect_errors(out, state, domains, profile):
     positions = state.get('error_files', {})
+    observed_at = int(out.now)
+    abort_slot = observed_at // 900
+    aborts = state.setdefault('lsapi_aborts_v1', {'slot': abort_slot, 'accounts': {}})
+    if aborts['slot'] != abort_slot:
+        start = aborts['slot'] * 900
+        for user, item in aborts['accounts'].items():
+            out.log('web_error_summary', error_type='lsapi_abort', user=user, level='warning',
+                    window_start=dt.datetime.fromtimestamp(start, dt.timezone.utc).isoformat(),
+                    window_end=dt.datetime.fromtimestamp(start + 900, dt.timezone.utc).isoformat(),
+                    first_observed_at=dt.datetime.fromtimestamp(item['first'], dt.timezone.utc).isoformat(),
+                    last_observed_at=dt.datetime.fromtimestamp(item['last'], dt.timezone.utc).isoformat(),
+                    **{key: item[key] for key in ('site', 'count', 'sample_pid', 'coverage')})
+        aborts = state['lsapi_aborts_v1'] = {'slot': abort_slot, 'accounts': {}}
     for path_text in profile['error_logs']:
         try:
             lines, pos, quality = read_tail(Path(path_text), positions.get(path_text), 1024 * 1024)
@@ -736,12 +749,12 @@ def collect_errors(out, state, domains, profile):
             for line in lines:
                 msg = line[:16384].decode('utf-8', errors='replace')
                 kind = None
-                if re.search(r'(?i)Abort request processing by PID', msg): kind = 'lsapi_abort'
-                elif re.search(r'(?i)(out of memory|cannot allocate memory)', msg): kind = 'memory_allocation_failure'
+                if re.search(r'(?i)(out of memory|cannot allocate memory)', msg): kind = 'memory_allocation_failure'
                 elif re.search(r'(?i)(segfault|segmentation fault|corrupt|double free)', msg): kind = 'native_crash'
                 elif re.search(r'(?i)(max.?children|max.?connections|reached.*max)', msg): kind = 'worker_limit'
                 elif re.search(r'(?i)(timed out|timeout)', msg): kind = 'timeout'
                 elif re.search(r'(?i)(fatal|uncaught)', msg): kind = 'php_fatal'
+                elif re.search(r'(?i)Abort request processing by PID', msg): kind = 'lsapi_abort'
                 if not kind:
                     continue
                 match = re.search(r'#APVH_([^:\]\s]+)', msg)
@@ -751,10 +764,27 @@ def collect_errors(out, state, domains, profile):
                 pid = re.search(r'(?:processing by PID:|\bpid[=: ]+)\s*(\d+)', msg, re.I)
                 if pid:
                     examples[key] = int(pid[1])
+            abort_users = set()
             for (kind, site), count in counts.items():
-                out.log('web_error_summary', error_type=kind, site=site, user=domains.get(site, ''),
-                        count=count, sample_pid=examples.get((kind, site)),
-                        coverage=quality, level='warning')
+                user = domains.get(site, '')
+                pid = examples.get((kind, site))
+                if kind != 'lsapi_abort' or not user:
+                    out.log('web_error_summary', error_type=kind, site=site, user=user, count=count,
+                            sample_pid=pid, coverage=quality, level='warning')
+                    continue
+                item = aborts['accounts'].setdefault(user, {'site': site, 'count': 0, 'sample_pid': None,
+                                                            'first': observed_at, 'coverage': {}})
+                if item['site'] != site:
+                    item['site'] = ''
+                item['count'] += count
+                item['last'] = observed_at
+                if pid is not None:
+                    item['sample_pid'] = pid
+                abort_users.add(user)
+            for user in abort_users:
+                coverage = aborts['accounts'][user]['coverage']
+                for key, value in quality.items():
+                    coverage[key] = (coverage.get(key, False) or value) if isinstance(value, bool) else coverage.get(key, 0) + value
         except OSError:
             out.log('collector_unavailable', component='global_error_log', path=path_text, level='warning')
     state['error_files'] = positions

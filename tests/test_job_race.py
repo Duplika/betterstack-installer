@@ -29,7 +29,7 @@ class JobRaceTests(unittest.TestCase):
             {'at': time.time(), 'agent_version': i.VERSION, 'started_at': 50, 'components': {'lve': True}},
             {'at': 0, 'agent_version': i.VERSION, 'started_at': 110, 'components': {'lve': True}},
             {'at': time.time(), 'agent_version': i.VERSION, 'started_at': 110,
-             'components': {'lve': 'failed', 'processes': 100, 'access': {}}},
+             'components': {'lve': 'failed', 'processes': 100, 'access': {}, 'kernel': None}},
         ]:
             with patch.object(i, 'load', return_value=marker):
                 with self.assertRaisesRegex(RuntimeError, 'new_observer_cycle_not_verified'):
@@ -38,5 +38,5 @@ class JobRaceTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'new_observer_cycle_marker_missing'):
                 i.verify_new_observer_cycle(100)
         with patch.object(i, 'load', return_value={'at': time.time(), 'agent_version': i.VERSION,
-                         'started_at': 110, 'components': {'lve': True, 'processes': 100, 'access': {}}}):
+                         'started_at': 110, 'components': {'lve': True, 'processes': 100, 'access': {}, 'kernel': None}}):
             i.verify_new_observer_cycle(100)

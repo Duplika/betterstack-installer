@@ -114,7 +114,7 @@ class StorageTests(unittest.TestCase):
             from contextlib import ExitStack
             with ExitStack() as stack:
                 stack.enter_context(patch.object(storage,'ROOT',data));stack.enter_context(patch.object(storage,'BASE',base))
-                stack.enter_context(patch.object(storage,'volumes',return_value=[{'device':'/dev/sda1','mountpoint':'/','fstype':'ext4','readonly':False}]))
+                stack.enter_context(patch.object(storage,'volumes',return_value=[{'device':'/dev/sda1','device_id':'8:1','mountpoint':'/','fstype':'ext4','readonly':False}]))
                 stack.enter_context(patch.object(storage,'volume_values',return_value={'total_bytes':1000,'available_bytes':500}))
                 stack.enter_context(patch.object(storage,'raid_arrays',return_value=[]))
                 stack.enter_context(patch.object(storage,'devices',return_value=[{'device':'/dev/sda','kind':'ata'},{'device':'/dev/sdb','kind':'ata'}]))
@@ -125,3 +125,32 @@ class StorageTests(unittest.TestCase):
                 state=json.loads((data/'private/storage-state.json').read_text())
                 self.assertEqual(len(state['smart']),2)
                 self.assertEqual(json.loads((data/'private/storage-health.json').read_text())['probe_failures'],0)
+
+    def test_capacity_is_throttled_and_retried_while_critical_probes_continue(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'private').mkdir()
+            (root / 'profile.json').write_text('{}')
+            volumes = storage.volumes(mount(1, '8:1', '/', '/', opts='ro'))
+            with patch.object(storage, 'ROOT', root), patch.object(storage, 'BASE', root), \
+                 patch.object(storage, 'Output') as output, patch.object(storage, 'volumes', return_value=volumes), \
+                 patch.object(storage, 'devices', return_value=[]), patch.object(storage, 'raid_arrays', return_value=[]), \
+                 patch.object(storage.time, 'time') as clock, patch.object(storage, 'volume_values') as probe:
+                probe.side_effect = lambda item, include_capacity: (
+                    {'readonly': 1, 'total_bytes': 4096} if include_capacity else {'readonly': 1})
+                for now, publishes_capacity in [(300, True), (360, False), (540, False), (600, True)]:
+                    clock.return_value = now
+                    output.return_value.reset_mock()
+                    storage.main()
+                    probe.assert_called_with(volumes[0], include_capacity=publishes_capacity)
+                    names = {call.args[0] for call in output.return_value.metric.call_args_list}
+                    self.assertIn('volume_readonly', names)
+                    self.assertIn('volume_probe_ok', names)
+                    self.assertEqual('volume_total_bytes' in names, publishes_capacity)
+                clock.return_value = 900
+                with patch.object(storage, 'volume_values', side_effect=OSError):
+                    with self.assertRaisesRegex(RuntimeError, 'volume_probe_failed'):
+                        storage.main()
+                clock.return_value = 960
+                storage.main()
+                probe.assert_called_with(volumes[0], include_capacity=True)

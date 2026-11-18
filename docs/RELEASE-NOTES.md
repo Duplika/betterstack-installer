@@ -1,3 +1,14 @@
+# 4.0.0-rc41 — candidata: cadencia del almacenamiento y resúmenes LSAPI
+
+- El observador local publica espacio e inodos una vez por volumen cada cinco
+  minutos. Comprueba disponibilidad, montaje en solo lectura y RAID cada minuto.
+- Agrupa los abortos LSAPI atribuibles a una cuenta en ventanas de 15 minutos,
+  conservando el recuento y los tiempos de observación. Los abortos sin
+  atribución y los errores críticos conservan su publicación habitual.
+- Admite rc40 y los pares de archivos del piloto revisados por SHA-256.
+  Conserva Vector, los cursores y las unidades existentes. La actualización
+  verifica un ciclo nuevo de cada observador y restaura el respaldo si falla.
+
 # 4.0.0-rc39 — candidata: cierre LVE filtrado
 
 - Publica cuentas con más de 20 faults sumados. Conserva el cierre con cero
