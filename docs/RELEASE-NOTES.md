@@ -1,3 +1,12 @@
+# 4.0.0-rc42 — candidata: correo del cierre diario LVE
+
+- Silencia la salida estándar del cron diario LVE revisado. El JSON de
+  éxito sigue llegando en el cierre de Better Stack y los errores quedan en
+  stderr para cron. Se conservan horarios, cuotas, permisos y argumentos.
+- Admite la instalación rc41 revisada. Acepta el cron original, la variante
+  con porcentaje escapado y la variante sin salida estándar. La copia de
+  seguridad y la reversión incluyen el cron si fue modificado.
+
 # 4.0.0-rc41 — candidata: cadencia del almacenamiento y resúmenes LSAPI
 
 - El observador local publica espacio e inodos una vez por volumen cada cinco

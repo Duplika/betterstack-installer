@@ -1,4 +1,15 @@
-# Better Stack installer — candidata rc39
+# Better Stack installer — candidata rc42
+
+`rc42` incorpora el muestreo de capacidad de `rc41` y conserva la detección
+por minuto de fallos de almacenamiento, RAID y montajes en solo lectura.
+Agrupa los abortos LSAPI atribuibles a cuentas en resúmenes de 15 minutos.
+
+En instalaciones compatibles con el cron diario de CloudLinux, el upgrade
+suprime la salida estándar del job revisado. Los errores de stderr, los
+cierres enviados a Better Stack y la frecuencia del job se conservan.
+El preflight comprueba la huella del publicador y acepta las variantes
+revisadas del cron. Consultá [las notas de versión](docs/RELEASE-NOTES.md).
+
 
 ## Resumen diario de CloudLinux LVE
 

@@ -126,7 +126,7 @@ class Rc40UpgradeTests(UpgradeTests):
         collector = i.CLOUD / 'collector.py'
         storage = i.CLOUD / 'storage.py'
         previous_collector = (i.HERE / 'collector.py').read_bytes().replace(
-            b"COLLECTOR_RELEASE = '4.0.0-rc41'", b"COLLECTOR_RELEASE = '4.0.0-rc40'")
+            b"COLLECTOR_RELEASE = '4.0.0-rc42'", b"COLLECTOR_RELEASE = '4.0.0-rc40'")
 
         def rebaseline():
             self.meta['baseline'] = identity.snapshot(self.meta['critical_paths'], self.meta['config_path'])
@@ -155,3 +155,7 @@ class Rc40UpgradeTests(UpgradeTests):
                 i.upgrade_v4(TARGET, {})
         self.assertIn(str(i.CLOUD / 'storage.py'), recover.call_args.args[0]['files'])
         activate.assert_not_called()
+
+
+class Rc41UpgradeTests(UpgradeTests):
+    previous_version = "4.0.0-rc41"
