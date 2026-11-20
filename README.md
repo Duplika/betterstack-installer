@@ -1,4 +1,12 @@
-# Better Stack installer — candidata rc44
+# Better Stack installer — candidata rc45
+
+`preflight` e `install` seleccionan la base esencial común de forma
+predeterminada en altas nuevas de cPanel. La base detecta CloudLinux y sus
+capacidades LVE. En AlmaLinux publica las métricas de host y salud, sin
+lectura periódica de errores de aplicación. Las instalaciones existentes
+siguen usando sus rutas de actualización revisadas.
+
+## Mejoras de rc44
 
 `rc44` atribuye los OOM de CloudLinux a una cuenta o a un reseller
 cuando existe una correspondencia en el inventario local de cPanel.
@@ -67,10 +75,9 @@ colectores. `--base-monitoring` sigue disponible para seleccionar la base común
 
 ## Base esencial común rc36
 
-Seleccionar explícitamente `--base-monitoring` en `preflight`, `install` o
-`upgrade`. En altas nuevas instala directamente el observador esencial, sin
-activar accesos/procesos por cuenta ni pasar por rc26. No combinar opciones de
-migración. Las rutas históricas sin esta opción conservan su comportamiento.
+En altas nuevas, `preflight` e `install` eligen esta base. El indicador
+`--base-monitoring` sigue aceptado para compatibilidad y para las rutas
+de conversión revisadas. No combinar opciones de migración.
 
 - Migración revisada: observer-v4 rc34 esencial con storage; o los dos
   transportes mínimos heredados rc35 (`--minimal-host` ya aplicado).
@@ -99,15 +106,15 @@ bash /root/installer-rc36.sh upgrade --base-monitoring
 bash /root/installer-rc36.sh verify
 
 # Alta nueva, tras configure/credential con el mismo instalador:
-bash /root/installer-rc36.sh preflight --target /root/perfil.json --base-monitoring
-bash /root/installer-rc36.sh install --target /root/perfil.json --credential /root/fuente.json --base-monitoring
+bash /root/installer-rc45.sh preflight --target /root/perfil.json
+bash /root/installer-rc45.sh install --target /root/perfil.json --credential /root/fuente.json
 ```
 
 El upgrade respalda y revierte ante fallos, y sólo reinicia el transporte del
 monitor. El rollback explícito conserva datos de ejecución y cursores:
 `bash /root/installer-rc36.sh rollback`. El despliegue exige un piloto por familia
-antes de continuar con los demás servidores. Alta nueva AlmaLinux 8 conserva la
-restricción previa: sólo migración revisada.
+antes de continuar con los demás servidores. La base común también admite
+altas nuevas en AlmaLinux 8 si pasan las comprobaciones del instalador.
 
 ## Historial y rutas anteriores
 

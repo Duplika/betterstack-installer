@@ -47,7 +47,7 @@ def contract(observer, caps):
         'raid': 'when_present' if observer else 'not_collected',
         'smart': 'when_supported' if observer else 'not_collected',
         'account_diagnostics': observer,
-        'application_logs': 'selected_global_errors' if observer else 'disabled',
+        'application_logs': 'selected_global_errors' if observer and caps.get('os_id') == 'cloudlinux' else 'disabled',
     }
 
 
@@ -101,7 +101,7 @@ def plan(api, target, caps):
 
 def migrate(api, target, caps, apply=False):
     current = api.load(api.BASE/'manifest.json')
-    if (current.get('agent_version') == '4.0.0-rc36'
+    if (current.get('agent_version') != api.VERSION
             and current.get('migration_review', {}).get('base_monitoring') == MARKER):
         if apply:
             api.upgrade(target, caps)

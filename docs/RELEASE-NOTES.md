@@ -1,3 +1,10 @@
+# 4.0.0-rc45 — candidata: perfil esencial predeterminado
+
+- Las altas nuevas usan `essential-base-v1` en cPanel con AlmaLinux o CloudLinux.
+- La capacidad LVE se detecta antes de habilitar su recolección. La base común
+  en AlmaLinux omite el lector periódico de errores de aplicación.
+- La ruta revisada desde rc44 conserva el transporte y admite reversión.
+
 # 4.0.0-rc44 — candidata: atribución de eventos OOM
 
 - Conserva la agrupación de cinco minutos y añade la identidad comprobable de

@@ -179,3 +179,7 @@ class Rc43UpgradeTests(UpgradeTests):
         self.assertEqual(i.validate_v4_upgrade(TARGET, updated), self.meta)
         with self.assertRaisesRegex(RuntimeError, 'target_or_capabilities_changed'):
             i.validate_v4_upgrade(TARGET, dict(updated, os_version='10.0'))
+
+
+class Rc44UpgradeTests(UpgradeTests):
+    previous_version = '4.0.0-rc44'
