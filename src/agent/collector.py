@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc44'
+COLLECTOR_RELEASE = '4.0.0-rc45'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -1238,8 +1238,11 @@ def main_essential(profile, state, out, started):
     if profile.get('disk_io_observer'):
         components['disk_io'] = collect_disk_io(out, state, now, state['boot_id'], profile.get('disk_io_generation'))
     components['lve'] = collect_pressure(out, state, profile, now)
-    for name, function in (('errors', lambda: collect_errors(out, state, domains, profile)),
-                           ('kernel', lambda: collect_kernel(out, state, accounts, users))):
+    components['errors'] = 'disabled'
+    readers = [('kernel', lambda: collect_kernel(out, state, accounts, users))]
+    if not profile.get('base_monitoring') or profile.get('capabilities', {}).get('os_id') == 'cloudlinux':
+        readers.append(('errors', lambda: collect_errors(out, state, domains, profile)))
+    for name, function in readers:
         try:
             components[name] = function()
         except Exception as error:

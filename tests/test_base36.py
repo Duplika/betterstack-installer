@@ -3,10 +3,14 @@ import contextlib
 import copy
 import json
 import subprocess
+import sys
+import tempfile
 import unittest
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 import base_monitoring as b
+import collector
 import config
 import identity
 import installer as i
@@ -20,12 +24,55 @@ from test_upgrade_rc15 import UpgradeTests, TARGET
 class BaseTests(unittest.TestCase):
     def test_capabilities_do_not_invent_legacy_probes_or_lve(self):
         legacy = b.contract(False, {'lve_status':'available'})
-        observer = b.contract(True, {'lve_status':'not_applicable'})
+        observer = b.contract(True, {'os_id':'almalinux','lve_status':'not_applicable'})
+        cloudlinux = b.contract(True, {'os_id':'cloudlinux','lve_status':'available'})
         self.assertFalse(legacy['storage_observer'])
         self.assertFalse(legacy['lve_history'])
         self.assertFalse(observer['lve_history'])
         self.assertEqual(legacy['application_logs'],'disabled')
+        self.assertEqual(observer['application_logs'],'disabled')
+        self.assertTrue(cloudlinux['lve_history'])
+        self.assertEqual(cloudlinux['application_logs'],'selected_global_errors')
         self.assertEqual(legacy['cpu_aggregation'],observer['cpu_aggregation'])
+
+    def test_common_almalinux_cycle_omits_periodic_application_log_reads(self):
+        for distro, expected_reads in (('almalinux', 0), ('cloudlinux', 1)):
+            with self.subTest(distro=distro), \
+                 patch.object(collector, 'essential_inventory', return_value=({}, set(), {})), \
+                 patch.object(collector, 'collect_pressure', return_value='available'), \
+                 patch.object(collector, 'collect_errors', return_value='available') as errors, \
+                 patch.object(collector, 'collect_kernel', return_value='available'), \
+                 patch.object(collector, 'active_diagnostic', return_value=None), \
+                 patch.object(collector, 'scheduled_daily_lve', return_value=None), \
+                 patch.object(collector, 'atomic_json'):
+                output = Mock(logs=[], metrics=[])
+                profile = {'base_monitoring': True, 'capabilities': {'os_id': distro}}
+                collector.main_essential(profile, {'boot_id': 'test-boot'}, output, 0)
+                self.assertEqual(errors.call_count, expected_reads)
+
+    def test_explicit_base_flag_uses_normal_upgrade_on_an_existing_common_profile(self):
+        current = {'agent_version': '4.0.0-rc44', 'migration_review': {'base_monitoring': b.MARKER}}
+        with patch.object(i, 'load', return_value=current), patch.object(i, 'upgrade') as upgrade:
+            b.migrate(i, TARGET, {}, apply=True)
+        upgrade.assert_called_once_with(TARGET, {})
+
+    def test_cli_uses_common_profile_by_default_for_fresh_almalinux_eight(self):
+        caps = {'os_id': 'almalinux', 'os_version': '8.10', 'lve_status': 'not_applicable'}
+        with tempfile.TemporaryDirectory(dir='/root') as folder:
+            root = Path(folder)
+            with patch.multiple(i, BASE=root/'base', STATE=root/'state', LEGACY=root/'legacy',
+                                CLOUD=root/'cloud', CLOUD_DATA=root/'data'), \
+                 patch.object(i, 'load', return_value=TARGET), patch.object(i, 'secure_target', return_value=caps), \
+                 patch.object(i, 'cgroups_pilot'), patch.object(i.fcntl, 'flock'), \
+                 patch.object(i.os, 'open', return_value=30), patch.object(b, 'fresh_preflight') as preflight, \
+                 patch.object(i, 'fresh') as fresh, patch.object(i, 'request_publication'):
+                with patch.object(sys, 'argv', ['installer', 'preflight', '--target', '/root/profile.json']):
+                    i.main()
+                with patch.object(sys, 'argv', ['installer', 'install', '--target', '/root/profile.json',
+                                                '--credential', '/root/source.json']):
+                    i.main()
+        preflight.assert_called_once_with(i, TARGET, caps)
+        fresh.assert_called_once_with(TARGET, caps, Path('/root/source.json'), essential_base=True)
 
     def test_fresh_graph_never_has_per_core_output_and_preserves_transport(self):
         profile = dict(TARGET,monitoring_policy='essential-v1',disk_io_observer=True)
@@ -50,8 +97,6 @@ class BaseTests(unittest.TestCase):
         live.assert_not_called()
 
     def test_direct_install_stages_essential_selection_before_any_collector_start(self):
-        import tempfile
-        from pathlib import Path
         with tempfile.TemporaryDirectory(dir='/root') as folder:
             root=Path(folder);(root/'state').mkdir()
             credential=root/'credential.json'
