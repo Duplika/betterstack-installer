@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc42'
+COLLECTOR_RELEASE = '4.0.0-rc44'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -404,6 +404,7 @@ class Output:
         self.logs.append(dict(dt=self.at, host=self.profile['host'],
                               server_ip=self.profile['server_ip'], event_kind=kind,
                               service='cloudlinux_observer', template_version=TEMPLATE_VERSION,
+                              collector_release=COLLECTOR_RELEASE,
                               level=fields.pop('level', 'info'), **fields))
 
     def metric(self, name, value, **labels):
@@ -792,6 +793,25 @@ def collect_errors(out, state, domains, profile):
 
 KERNEL_OOM_WINDOW = 300
 KERNEL_OOM_GRACE = 60
+RESELLER_LVE_OFFSET = 1000000000
+CPANEL_RESELLERS = Path('/var/cpanel/resellers')
+
+
+def oom_identity(lve_id, accounts, users):
+    if lve_id < RESELLER_LVE_OFFSET:
+        user = users.get(lve_id)
+        if user in accounts:
+            return {'identity_scope': 'account', 'user': user}
+    else:
+        reseller = users.get(lve_id - RESELLER_LVE_OFFSET)
+        if reseller and USER.fullmatch(reseller):
+            try:
+                with CPANEL_RESELLERS.open() as registry:
+                    if any(line.partition(':')[0].strip() == reseller and ':' in line for line in registry):
+                        return {'identity_scope': 'reseller', 'reseller': reseller}
+            except OSError:
+                pass
+    return {'identity_scope': 'unknown'}
 
 
 def record_kernel_event(out, state, record, now):
@@ -818,12 +838,14 @@ def record_kernel_event(out, state, record, now):
         group = re.search(r'(?:^|,)oom_memcg=([^,]+)', message)
         task = re.search(r'(?:^|,)task=([^,]+)', message)
         pid = re.search(r'(?:^|,)pid=(\d+)(?:,|$)', message)
-        lve = re.search(r'(?:^|/)lve(\d+)(?:/|$)', group[1]) if group else None
-        if primary[1] != 'CONSTRAINT_MEMCG' or not lve:
+        lves = re.findall(r'(?:^|/)lve(\d+)(?=/|$)', group[1]) if group else []
+        if primary[1] != 'CONSTRAINT_MEMCG' or not lves:
             out.log('kernel_event', error_type='oom', oom_events=1, killed_processes=0,
+                    identity_scope='server' if primary[1] == 'CONSTRAINT_NONE' else 'unknown',
                     oom_constraint=primary[1], level='error')
             return
-        lve_id = int(lve[1])
+        # For nested reseller and account cgroups, the last LVE is the constrained group.
+        lve_id = int(lves[-1])
         process = task[1][:64] if task else 'unknown'
         window = at - at % KERNEL_OOM_WINDOW
         key = f'{window}:{lve_id}:{process}'
@@ -844,19 +866,20 @@ def record_kernel_event(out, state, record, now):
             limits['last_seen'] = max(limits['last_seen'], at)
         else:
             out.log('kernel_event', error_type='oom', oom_events=0, killed_processes=1,
-                    process=killed[2][:64], level='error')
+                    process=killed[2][:64], identity_scope='unknown', level='error')
     elif re.search(r'(?i)out of memory', message):
         out.log('kernel_event', error_type='oom', oom_context=True, level='error')
 
 
-def flush_kernel_oom(out, state, now):
+def flush_kernel_oom(out, state, now, accounts, users):
     memory = state.get('kernel_oom_v1')
     if not memory:
         return
     windows = memory['windows']
     for key, summary in list(windows.items()):
         if now >= summary['window_start'] + KERNEL_OOM_WINDOW + KERNEL_OOM_GRACE:
-            out.log('kernel_event', error_type='oom', **summary, level='error')
+            identity = oom_identity(summary['lve_id'], accounts, users)
+            out.log('kernel_event', error_type='oom', **summary, **identity, level='error')
             del windows[key]
     for pid, (key, at) in list(memory['victims'].items()):
         if key not in windows or now - at > KERNEL_OOM_GRACE:
@@ -892,7 +915,7 @@ def read_kernel_batch(args):
                 journal.kill()
 
 
-def collect_kernel(out, state):
+def collect_kernel(out, state, accounts, users):
     now = int(time.time())
     since = max(now - 120, int(state.get('journal_at', now - 60)))
     previous_cursor = state.get('journal_cursor')
@@ -913,7 +936,7 @@ def collect_kernel(out, state):
         except (KeyError, TypeError, ValueError):
             pass
     # Keep windows open while more entries from the same time can still arrive.
-    flush_kernel_oom(out, state, watermark if backlog else now)
+    flush_kernel_oom(out, state, watermark if backlog else now, accounts, users)
     state['journal_at'] = now
 
 
@@ -1216,7 +1239,7 @@ def main_essential(profile, state, out, started):
         components['disk_io'] = collect_disk_io(out, state, now, state['boot_id'], profile.get('disk_io_generation'))
     components['lve'] = collect_pressure(out, state, profile, now)
     for name, function in (('errors', lambda: collect_errors(out, state, domains, profile)),
-                           ('kernel', lambda: collect_kernel(out, state))):
+                           ('kernel', lambda: collect_kernel(out, state, accounts, users))):
         try:
             components[name] = function()
         except Exception as error:
@@ -1311,7 +1334,7 @@ def main():
                 lambda: collect_lve(out, profile), started_wall)),
             ('access', lambda: collect_access(out, state, domains, profile)),
             ('errors', lambda: collect_errors(out, state, domains, profile)),
-            ('kernel', lambda: collect_kernel(out, state)),
+            ('kernel', lambda: collect_kernel(out, state, accounts, users)),
             ('wordpress', lambda: collect_wordpress(out, state, profile))]:
             try:
                 components[name] = fn()

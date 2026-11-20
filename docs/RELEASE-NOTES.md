@@ -1,3 +1,18 @@
+# 4.0.0-rc44 — candidata: atribución de eventos OOM
+
+- Conserva la agrupación de cinco minutos y añade la identidad comprobable de
+  la cuenta o reseller en eventos OOM de CloudLinux. Si la identidad queda
+  sin resolver, el evento conserva el ID LVE disponible.
+- Registra `collector_release` en eventos del observador. El instalador, el
+  colector y el artefacto reproducible usan la misma versión.
+- Valida el upgrade desde rc42 y rc43 por los hashes de sus archivos publicados.
+  Mantiene la ruta de actualización de AlmaLinux 9.8 a 9.9 incluida en rc43.
+
+# 4.0.0-rc43 — candidata: transición AlmaLinux 9.8 a 9.9
+
+- Acepta la transición revisada de AlmaLinux 9.8 a 9.9 y actualiza el perfil
+  de capacidades del observador con la versión detectada.
+
 # 4.0.0-rc42 — candidata: correo del cierre diario LVE
 
 - Silencia la salida estándar del cron diario LVE revisado. El JSON de

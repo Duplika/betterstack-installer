@@ -62,19 +62,36 @@ class ObserverUpgradeTests(unittest.TestCase):
         out = Output()
         state = {}
         chunks = [
-            ([line('A', 599, 'oom-kill:constraint=CONSTRAINT_MEMCG,oom_memcg=/lve.slice/lve19,task=lsphp,pid=25,uid=19')], True),
+            ([line('A', 599, 'oom-kill:constraint=CONSTRAINT_MEMCG,oom_memcg=/lve.slice/lve1000000018/lve19,task=lsphp,pid=25,uid=19')], True),
             ([line('B', 601, 'Memory cgroup out of memory: Killed process 25 (lsphp)')], False),
         ]
+        accounts, users = {'example'}, {18: 'partner', 19: 'example'}
         with patch.object(collector, 'read_kernel_batch', side_effect=chunks) as read,                 patch.object(collector.time, 'time', return_value=1000):
-            collector.collect_kernel(out, state)
+            collector.collect_kernel(out, state, accounts, users)
             self.assertEqual(out.events, [])
             self.assertEqual(state['journal_cursor'], 'A')
-            collector.collect_kernel(out, state)
+            collector.collect_kernel(out, state, accounts, users)
         self.assertEqual(read.call_args.args[0][-2:], ['--after-cursor', 'A'])
         self.assertEqual(state['journal_cursor'], 'B')
         self.assertEqual(len(out.events), 1)
         self.assertEqual(out.events[0]['oom_events'], 1)
         self.assertEqual(out.events[0]['killed_processes'], 1)
+        self.assertEqual(out.events[0]['lve_id'], 19)
+        self.assertEqual(out.events[0]['identity_scope'], 'account')
+        self.assertEqual(out.events[0]['user'], 'example')
+
+    def test_reseller_oom_requires_cpanel_inventory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = Path(directory) / 'resellers'
+            registry.write_text('partner: all\n')
+            accounts = {'example'}
+            users = {18: 'partner', 19: 'example', 20: 'daemon'}
+            with patch.object(collector, 'CPANEL_RESELLERS', registry):
+                self.assertEqual(collector.oom_identity(1000000018, accounts, users),
+                                 {'identity_scope': 'reseller', 'reseller': 'partner'})
+                for lve_id in (18, 20, 99, 1000000019):
+                    self.assertEqual(collector.oom_identity(lve_id, accounts, users),
+                                     {'identity_scope': 'unknown'})
 
     def test_oldest_entries_are_returned_when_batch_fills(self):
         count = collector.KERNEL_JOURNAL_BATCH

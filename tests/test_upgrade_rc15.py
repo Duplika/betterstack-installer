@@ -18,6 +18,13 @@ TARGET = {'host': 'cloud.example.net', 'server_ip': '203.0.113.20', 'source_id':
           'ingesting_host': 's1234568.us-west-2a.betterstackdata.com'}
 
 
+def released_files(version):
+    script = (Path(__file__).parents[1] / 'releases' / version / 'installer.sh').read_text()
+    encoded = script.split("<<'DUPLIKA_4_PAYLOAD'\n", 1)[1].split('DUPLIKA_4_PAYLOAD', 1)[0]
+    with tarfile.open(fileobj=io.BytesIO(base64.b64decode(encoded)), mode='r:gz') as archive:
+        return {member.name: archive.extractfile(member).read() for member in archive}
+
+
 class UpgradeTests(unittest.TestCase):
     previous_version = "4.0.0-rc15"
     def setUp(self):
@@ -29,10 +36,7 @@ class UpgradeTests(unittest.TestCase):
                             ('STATE', 'state'), ('CLOUD_DATA', 'data')]:
             self.stack.enter_context(patch.object(i, key, self.root / folder))
         self.stack.enter_context(patch.object(identity, 'BASE', i.BASE))
-        script = (Path(__file__).parents[1] / ('releases/' + self.previous_version + '/installer.sh')).read_text()
-        encoded = script.split("<<'DUPLIKA_4_PAYLOAD'\n", 1)[1].split('DUPLIKA_4_PAYLOAD', 1)[0]
-        with tarfile.open(fileobj=io.BytesIO(base64.b64decode(encoded)), mode='r:gz') as archive:
-            files = {m.name: archive.extractfile(m).read() for m in archive}
+        files = released_files(self.previous_version)
         for p in i.runtime_files(): p.write_bytes(files[p.name])
         (i.CLOUD / 'collector.py').write_bytes(files['collector.py'])
         (i.CLOUD / 'storage.py').write_bytes(files['storage.py'])
@@ -125,7 +129,7 @@ class Rc40UpgradeTests(UpgradeTests):
     def test_only_the_complete_reviewed_telemetry_pilot_is_accepted(self):
         collector = i.CLOUD / 'collector.py'
         storage = i.CLOUD / 'storage.py'
-        previous_collector = (i.HERE / 'collector.py').read_bytes().replace(
+        previous_collector = released_files('4.0.0-rc42')['collector.py'].replace(
             b"COLLECTOR_RELEASE = '4.0.0-rc42'", b"COLLECTOR_RELEASE = '4.0.0-rc40'")
 
         def rebaseline():
@@ -159,3 +163,19 @@ class Rc40UpgradeTests(UpgradeTests):
 
 class Rc41UpgradeTests(UpgradeTests):
     previous_version = "4.0.0-rc41"
+
+
+class Rc42UpgradeTests(UpgradeTests):
+    previous_version = '4.0.0-rc42'
+
+
+class Rc43UpgradeTests(UpgradeTests):
+    previous_version = '4.0.0-rc43'
+
+    def test_only_reviewed_almalinux_minor_update_is_accepted(self):
+        self.meta['capabilities'] = {'os_id': 'almalinux', 'os_version': '9.8'}
+        (i.BASE / 'manifest.json').write_text(json.dumps(self.meta))
+        updated = dict(self.meta['capabilities'], os_version='9.9')
+        self.assertEqual(i.validate_v4_upgrade(TARGET, updated), self.meta)
+        with self.assertRaisesRegex(RuntimeError, 'target_or_capabilities_changed'):
+            i.validate_v4_upgrade(TARGET, dict(updated, os_version='10.0'))
