@@ -1,4 +1,12 @@
-# Better Stack installer — candidata rc42
+# Better Stack installer — candidata rc44
+
+`rc44` atribuye los OOM de CloudLinux a una cuenta o a un reseller
+cuando existe una correspondencia en el inventario local de cPanel.
+Conserva el ID LVE de los eventos agrupados y añade la versión del
+colector a sus eventos. Admite actualizar instalaciones revisadas de
+rc42 y rc43. Consultá [las notas de versión](docs/RELEASE-NOTES.md).
+
+## Mejoras de rc42
 
 `rc42` incorpora el muestreo de capacidad de `rc41` y conserva la detección
 por minuto de fallos de almacenamiento, RAID y montajes en solo lectura.
