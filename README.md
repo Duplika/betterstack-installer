@@ -1,4 +1,16 @@
-# Better Stack installer — candidata rc45
+# Better Stack installer — candidata rc48
+
+La política esencial usa el cierre diario completo de CloudLinux para WHMCS.
+Retira la consulta recurrente de 15 minutos y sus métricas auxiliares.
+El diagnóstico dirigido sigue disponible. El preflight puede comprobar la
+lectura histórica una vez. Verificar cobertura del cierre y cantidad de filas
+en el addon tras actualizar. Los paneles del histórico intradiario dejarán
+de recibir datos para esta versión. Un cron diario externo reconocido conserva
+la responsabilidad de su cierre.
+
+En AlmaLinux y en instalaciones donde LVE no es compatible, el colector omite
+las métricas de salud del historial LVE. La actualización desde rc45 valida los
+archivos instalados y conserva el transporte Vector.
 
 `preflight` e `install` seleccionan la base esencial común de forma
 predeterminada en altas nuevas de cPanel. La base detecta CloudLinux y sus
@@ -36,7 +48,7 @@ umbral y descartes. El informe administrativo aplica su propio criterio
 por recurso.
 
 La consulta tiene un máximo de 45 segundos. Se difiere cuando el ciclo está
-ocupado o acaba de consultar la presión de 15 minutos, y los fallos reintentan
+ocupado, y los fallos reintentan
 con intervalo mínimo de 15 minutos. Entre ciclos se conserva el último estado
 del cierre para evitar logs de estado repetidos. Las métricas de salud siguen
 en cada ciclo.
@@ -106,8 +118,8 @@ bash /root/installer-rc36.sh upgrade --base-monitoring
 bash /root/installer-rc36.sh verify
 
 # Alta nueva, tras configure/credential con el mismo instalador:
-bash /root/installer-rc45.sh preflight --target /root/perfil.json
-bash /root/installer-rc45.sh install --target /root/perfil.json --credential /root/fuente.json
+bash /root/installer-rc48.sh preflight --target /root/perfil.json
+bash /root/installer-rc48.sh install --target /root/perfil.json --credential /root/fuente.json
 ```
 
 El upgrade respalda y revierte ante fallos, y sólo reinicia el transporte del
@@ -132,10 +144,10 @@ rc30 permite seleccionar explícitamente un muestreo de host más liviano en los
 | --- | --- |
 | CPU, RAM esencial, carga y uptime | 60 s |
 | Errores web globales y kernel | Lectura incremental cada 60 s; eventos seleccionados |
-| Volúmenes reales, inodos y Linux MD RAID | Sonda existente cada 60 s |
+| Volúmenes reales, inodos y Linux MD RAID | Capacidad e inodos cada 5 min; estado de montaje y RAID cada 60 s |
 | Red e I/O de discos | 300 s |
 | SMART | Hasta una consulta por disco cada 6 h, distribuida entre ciclos |
-| Cuentas con presión | Historial cerrado de 15 min; log sólo si un recurso registra más de 10 fallos |
+| Cuentas con presión | Cierre del día anterior por cuenta y recurso; marca de completitud incluso con cero cuentas publicadas |
 | Inventario cPanel | Recuentos cada 12 h; mapa cacheado e invalidado por metadatos de userdomains/passwd |
 | Salud | Heartbeat, fallos, duración, RSS y CPU con hijos cada 60 s |
 | Accesos, procesos y detalle LVE/WordPress por cuenta | Desactivados por defecto; sólo diagnóstico explícito de hasta 60 min |

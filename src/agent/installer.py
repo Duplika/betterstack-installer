@@ -640,12 +640,21 @@ def fresh(target, caps, credential, recover_bootstrap=False, essential_base=Fals
         base_monitoring.fresh_preflight(sys.modules[__name__], target, caps)
     else:
         resource_preflight(caps)
+    deployment = dict(target)
+    if essential_base:
+        deployment['base_monitoring'] = True
+        cron = external_lve_cron(target, caps)
+        if cron is not None:
+            # An unescaped percent in cron splits the command before Python starts.
+            if b'CPUQuota=10%' in cron[0]:
+                raise RuntimeError('install:daily_cron_requires_percent_escape')
+            deployment['daily_lve_external'] = True
     write(STATE / 'install-pending.json', identity.canonical({'phase': 'base_installing', 'target': target}))
     with tempfile.TemporaryDirectory(prefix='duplika-install4-', dir='/root') as folder:
         stage = Path(folder)
         for name in ('install_base.py', 'config.py', 'collector.py', 'capabilities.py', 'base_monitoring.py'):
             shutil.copyfile(HERE / name, stage / name)
-        write(stage / 'deployment.json', identity.canonical(dict(target, base_monitoring=True) if essential_base else target))
+        write(stage / 'deployment.json', identity.canonical(deployment))
         write(stage / 'credentials.json', identity.canonical(creds))
         # Native tests and validation are part of the reviewed base installer.
         for operation in ('preflight', 'install'):
@@ -737,6 +746,9 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc42'] = 'upgrade_rc42.json'
     reviewed_versions['4.0.0-rc43'] = 'upgrade_rc43.json'
     reviewed_versions['4.0.0-rc44'] = 'upgrade_rc44.json'
+    reviewed_versions['4.0.0-rc45'] = 'upgrade_rc45.json'
+    reviewed_versions['4.0.0-rc46'] = 'upgrade_rc46.json'
+    reviewed_versions['4.0.0-rc47'] = 'upgrade_rc47.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
@@ -756,7 +768,7 @@ def validate_v4_upgrade(target, caps):
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    had_storage = had_storage or previous == '4.0.0-rc44'
+    had_storage = had_storage or previous in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -860,7 +872,10 @@ def verify_new_storage_cycle(started_after):
 
 DAILY_LVE_CRON = Path('/etc/cron.d/duplika-lve-daily')
 DAILY_LVE_SCRIPT = Path('/usr/local/sbin/duplika-lve-daily')
-DAILY_LVE_SCRIPT_SHA256 = '3998e1bd1cb77187a870d76f65892b8f4c1b9505ff98d77b3ea64fcd44aaddf2'
+DAILY_LVE_SCRIPT_DIGESTS = {
+    '3998e1bd1cb77187a870d76f65892b8f4c1b9505ff98d77b3ea64fcd44aaddf2',
+    '3a123696a786d19f1627a1f9d0ee3746677a6b58567a368efd8473df0aeb43df',  # Date recovery variant.
+}
 
 
 def external_lve_cron(target, caps):
@@ -872,7 +887,7 @@ def external_lve_cron(target, caps):
     original = identity.read(DAILY_LVE_CRON)
     # Only correct the reviewed independent daily job. A customized job needs
     # an explicit review before either publisher is selected.
-    if hashlib.sha256(identity.read(DAILY_LVE_SCRIPT)).hexdigest() != DAILY_LVE_SCRIPT_SHA256:
+    if hashlib.sha256(identity.read(DAILY_LVE_SCRIPT)).hexdigest() not in DAILY_LVE_SCRIPT_DIGESTS:
         raise RuntimeError('upgrade:unreviewed_lve_daily_script')
     prefix = b'CRON_TZ=America/Argentina/Buenos_Aires\n'
     command = (b'23,38,53 0 * * * root /usr/bin/systemd-run --quiet --wait --pipe --collect '
@@ -895,7 +910,7 @@ def upgrade_v4(target, caps):
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    refresh_observer = refresh_observer or old['agent_version'] == '4.0.0-rc44'
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47')
     if not refresh_observer:
         cron = None
     if cron is not None and cron[0] != cron[1]:

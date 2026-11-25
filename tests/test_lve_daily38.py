@@ -54,10 +54,9 @@ class DailyLveTests(unittest.TestCase):
         with patch.object(collector, 'collect_daily_lve', return_value='available') as daily:
             self.assertIsNone(collector.scheduled_daily_lve(self.output, self.state, self.profile, self.now, 8))
             self.assertEqual(collector.scheduled_daily_lve(self.output, self.state, self.profile, self.now, 1), 'available')
-            self.state['pressure_v27'] = {'attempt_at': self.now + 60}
             self.assertEqual(collector.scheduled_daily_lve(self.output, self.state, self.profile, self.now + 60, 1), 'available')
             self.assertEqual(collector.scheduled_daily_lve(self.output, self.state, self.profile, self.now + 120, 8), 'available')
-        daily.assert_called_once()
+        self.assertEqual(daily.call_count, 2)
 
     def test_invalid_or_duplicate_source_cannot_emit_complete_report(self):
         data = collector.json.dumps({'result': 'success', 'users': [self.row, self.row]})

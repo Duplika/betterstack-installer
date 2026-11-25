@@ -290,11 +290,18 @@ def main():
             for key, value in values.items():
                 out.metric('smart_' + key, value, device=item['device'])
             out.metric('smart_sample_timestamp_seconds', now, device=item['device'])
+        previous_reports = state.get('smart_report_slots', {})
+        reports = {}
         for item in disks:
+            device = item['device']
+            reports[device] = capacity_slot
             sample = observations.get(item['device'], {})
+            if previous_reports.get(device) == capacity_slot and sample.get('attempt_at') != now:
+                continue
             out.metric('smart_observed', int(sample.get('status') == 'observed'), device=item['device'])
             if 'attempt_at' in sample:
                 out.metric('smart_attempt_age_seconds', max(0, now - sample['attempt_at']), device=item['device'])
+        state['smart_report_slots'] = reports
         signature = {'volumes': inventory, 'volume_probe_failures': failed, 'raid': arrays,
                      'smart': {item['device']: {'status': observations.get(item['device'], {}).get('status', 'pending'),
                          'health': {k: v for k, v in observations.get(item['device'], {}).get('values', {}).items() if k != 'temperature_celsius'}} for item in disks}}

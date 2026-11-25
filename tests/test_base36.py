@@ -39,7 +39,6 @@ class BaseTests(unittest.TestCase):
         for distro, expected_reads in (('almalinux', 0), ('cloudlinux', 1)):
             with self.subTest(distro=distro), \
                  patch.object(collector, 'essential_inventory', return_value=({}, set(), {})), \
-                 patch.object(collector, 'collect_pressure', return_value='available'), \
                  patch.object(collector, 'collect_errors', return_value='available') as errors, \
                  patch.object(collector, 'collect_kernel', return_value='available'), \
                  patch.object(collector, 'active_diagnostic', return_value=None), \

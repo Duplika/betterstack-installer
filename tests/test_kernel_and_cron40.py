@@ -26,7 +26,7 @@ class ObserverUpgradeTests(unittest.TestCase):
             corrected = original.replace(b'10%', br'10\%')
             quiet = corrected.removesuffix(b'\n') + b' >/dev/null\n'
             with patch.multiple(installer, DAILY_LVE_CRON=cron, DAILY_LVE_SCRIPT=script,
-                                DAILY_LVE_SCRIPT_SHA256=expected_digest), patch.object(installer.identity, 'read', Path.read_bytes):
+                                DAILY_LVE_SCRIPT_DIGESTS={expected_digest}), patch.object(installer.identity, 'read', Path.read_bytes):
                 host = Mock(wraps='observer.example.com')
                 host.endswith.return_value = True
                 target = {'host': host}

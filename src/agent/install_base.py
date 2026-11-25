@@ -118,6 +118,8 @@ def preflight():
         'interval_seconds': 60, 'account_count': account_count}
     if DEPLOYMENT.get('base_monitoring'):
         profile.update(monitoring_policy='essential-v1', disk_io_observer=True, base_monitoring=True)
+        if DEPLOYMENT.get('daily_lve_external'):
+            profile['daily_lve_external'] = True
     print(json.dumps(profile, ensure_ascii=False, indent=2))
     print('Preflight correcto. No se leyó ningún wp-config.php ni log de una aplicación.')
     return profile
@@ -269,7 +271,7 @@ WantedBy=timers.target
         heartbeat = next(json.loads(row) for row in reversed(events)
                          if json.loads(row).get('event_kind') == 'collector_heartbeat')
         if profile.get('base_monitoring'):
-            expected_lve = 'available' if profile['capabilities']['lve_status'] == 'available' else 'not_supported'
+            expected_lve = 'daily_only' if profile['capabilities']['lve_status'] == 'available' else 'not_supported'
         else:
             expected_lve = True if profile['capabilities']['lve_status'] == 'available' else 'not_supported'
         if heartbeat['components'].get('lve') != expected_lve or heartbeat['components'].get('processes') == 'failed':

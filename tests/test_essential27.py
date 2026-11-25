@@ -49,20 +49,6 @@ class PressureTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'duplicate_account'):
             c.pressure_rows({'result': 'success', 'users': [row(cpu=11), row(pmem=15)]})
 
-    def test_one_successful_window_once_and_failure_does_not_advance(self):
-        out, state, now = self.out(), {}, 1800000100
-        start, end = c.pressure_window(now)
-        with patch.object(c, 'query_pressure', return_value=(start, end, c.pressure_rows({'result':'success','users':[row(cpu=12)]}))) as query:
-            self.assertEqual(c.collect_pressure(out, state, {}, now), 'available')
-            c.collect_pressure(out, state, {}, now + 60)
-        query.assert_called_once()
-        self.assertEqual(len([x for x in out.logs if x['event_kind']=='account_resource_faults']), 1)
-        self.assertFalse(any(x['name'].startswith('duplika_lve_cpu') for x in out.metrics))
-        with patch.object(c, 'query_pressure', side_effect=RuntimeError('private output')):
-            self.assertEqual(c.collect_pressure(out, state, {}, now + 900), 'failed')
-        self.assertEqual(state['pressure_v27']['window_end'], end)
-        self.assertNotIn('private output', json.dumps(out.logs))
-
     def test_query_uses_closed_utc_windows_and_no_result_truncation(self):
         with tempfile.TemporaryDirectory(dir='/root') as directory:
             tool = Path(directory) / 'cloudlinux-statistics'
@@ -76,19 +62,6 @@ class PressureTests(unittest.TestCase):
         self.assertNotIn('--period', args[0])
         self.assertIn('--limit=0', args[0]); self.assertIn('--threshold=10', args[0])
         self.assertTrue(kwargs['utc'])
-
-    def test_restart_does_not_replay_and_clock_rollback_is_explicit(self):
-        out, state, now = self.out(), {}, 1800000100
-        start, end = c.pressure_window(now)
-        with patch.object(c, 'query_pressure', return_value=(start, end, [])):
-            c.collect_pressure(out, state, {}, now)
-        restored = json.loads(json.dumps(state))
-        with patch.object(c, 'query_pressure') as query:
-            c.collect_pressure(out, restored, {}, now+60)
-            c.collect_pressure(out, restored, {}, now-1800)
-        query.assert_not_called()
-        self.assertTrue(any(x['name']=='duplika_lve_history_clock_rollback' for x in out.metrics))
-
 
 class EssentialCycleTests(unittest.TestCase):
     def setUp(self):

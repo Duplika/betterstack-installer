@@ -47,6 +47,10 @@ class DiskTests(unittest.TestCase):
             c.collect_disk_io(out, state, 1299, 'boot-a')
             read.assert_called_once()
         self.assertEqual(len([x for x in out.metrics if 'counter' in x]), 8)
+        names = [metric['name'] for metric in out.metrics]
+        self.assertEqual(names.count('duplika_disk_io_devices_observed'), 1)
+        self.assertEqual(names.count('duplika_disk_io_sample_interval_seconds'), 1)
+        self.assertEqual(names.count('duplika_disk_io_sample_failed'), 2)
         failed = c.Output(PROFILE, state, now=1300)
         with patch.object(c, 'read_diskstats', side_effect=PermissionError(1, 'PRIVATE_SECRET')):
             self.assertEqual(c.collect_disk_io(failed, state, 1300, 'boot-a'), 'failed')
@@ -139,23 +143,29 @@ class FaultCycleTests(unittest.TestCase):
     def setUp(self):
         previous.EssentialCycleTests.setUp(self)
         self.profile['disk_io_observer'] = True
+        self.profile['capabilities'] = {'os_id': 'cloudlinux', 'lve_status': 'available'}
         (c.BASE/'profile.json').write_text(json.dumps(self.profile))
 
     def test_failed_lve_preserves_healthy_spool_and_recovery_changes_global_status(self):
         started = time.time()
         output = io.StringIO()
         with patch.object(c,'read_diskstats',return_value=DiskTests().parse(DISKS)), \
-             patch.object(c,'query_pressure',side_effect=c.CommandFailure('command_failed','cloudlinux-statistics',40,exit_code=1)), \
+             patch.object(c,'scheduled_daily_lve', return_value='retry_pending'), \
              patch.object(c,'collect_kernel',return_value=None), contextlib.redirect_stdout(output):
             c.main()
         self.assertEqual(json.loads(output.getvalue())['status'], 'degraded')
         marker=json.loads((c.STATE/'collector-health.json').read_text())
         self.assertEqual(marker['status'], 'degraded')
         self.assertEqual(marker['components']['disk_io'], 'available')
+        self.assertEqual(marker['components']['lve_daily'], 'failed')
+        self.assertEqual(marker['components']['lve'], 'daily_only')
         metrics=[json.loads(x) for x in (c.SPOOL/'metrics.jsonl').read_text().splitlines()]
         self.assertEqual(len([x for x in metrics if 'counter' in x]), 8)
         self.assertTrue(any(x['name']=='duplika_collector_heartbeat' for x in metrics))
-        with patch.object(c.time,'time',return_value=started+302), patch.object(c,'query_pressure',return_value=None), \
+        retry_at = started + 302
+        with patch.object(c.time, 'time', return_value=retry_at), \
+             patch.object(c, 'scheduled_daily_lve', return_value='available'), \
+             patch.object(c, 'query_pressure', side_effect=AssertionError('unexpected periodic query')), \
              patch.object(c,'read_diskstats',return_value=DiskTests().parse(DISKS)), \
              patch.object(c,'collect_kernel',return_value=None), contextlib.redirect_stdout(io.StringIO()):
             c.main()

@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc45'
+COLLECTOR_RELEASE = '4.0.0-rc48'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -227,20 +227,20 @@ def collect_disk_io(out, state, now, boot_id, generation=None):
     attempted = entry.get('attempted_at')
     if attempted is None or now < attempted or now - attempted >= 300:
         entry['attempted_at'] = now
+        out.metric('duplika_disk_io_sample_interval_seconds', 300)
         try:
             rows = read_diskstats()
             for device, counters in rows.items():
                 for name, value in counters.items():
                     out.counter(name, value, device=device)
+            out.metric('duplika_disk_io_devices_observed', len(rows))
             entry.update(succeeded_at=now, failed=False, devices=len(rows))
         except Exception as error:
             entry.update(failed=True)
             out.log('collector_error', component='disk_io', **error_diagnostic(error), level='warning')
     if 'succeeded_at' in entry and now >= entry['succeeded_at']:
         out.metric('duplika_disk_io_sample_age_seconds', now - entry['succeeded_at'])
-    out.metric('duplika_disk_io_sample_interval_seconds', 300)
     out.metric('duplika_disk_io_sample_failed', int(entry.get('failed', True)))
-    out.metric('duplika_disk_io_devices_observed', entry.get('devices', 0))
     return 'failed' if entry.get('failed', True) else 'available'
 
 
@@ -1056,42 +1056,6 @@ def query_pressure(profile, now):
     return start, end, rows
 
 
-def collect_pressure(out, state, profile, now):
-    entry = state.setdefault('pressure_v27', {})
-    _, end = pressure_window(now)
-    if entry.get('window_end', 0) > end:
-        # A clock rollback is not permission to replay already processed windows.
-        out.metric('duplika_lve_history_clock_rollback', 1)
-    elif end != entry.get('window_end') and now - entry.get('attempt_at', 0) >= 300:
-        entry['attempt_at'] = now
-        try:
-            result = query_pressure(profile, now)
-            if result is None:
-                entry.update(window_end=end, succeeded_at=now, failed=False, status='not_supported')
-            else:
-                start, finish, rows = result
-                previous = entry.get('window_end')
-                if previous is not None and start > previous:
-                    out.log('account_resource_history_gap', missing_seconds=start - previous, level='warning')
-                for row in rows:
-                    out.log('account_resource_faults', user=row['user'], resources=row['resources'],
-                            mysql=row['mysql'], window_start=start, window_end=finish,
-                            window_id=str(start) + ':' + row['user'], threshold=PRESSURE_THRESHOLD,
-                            measurement='cloudlinux_history', level='warning')
-                out.metric('duplika_lve_history_accounts_affected', len(rows))
-                entry.update(window_end=finish, succeeded_at=now, failed=False, status='available')
-        except Exception as error:
-            entry.update(failed=True, status='failed')
-            # Do not include external command output, SQL, or arbitrary exception text.
-            out.log('collector_error', component='lve_history', **error_diagnostic(error), level='warning')
-    if 'succeeded_at' in entry and now >= entry['succeeded_at']:
-        out.metric('duplika_lve_history_sample_age_seconds', now - entry['succeeded_at'])
-    out.metric('duplika_lve_history_sample_interval_seconds', PRESSURE_INTERVAL)
-    out.metric('duplika_lve_history_sample_failed', int(entry.get('failed', True)))
-    return 'failed' if entry.get('failed', True) else entry.get('status', 'unknown')
-
-
-
 DAILY_LVE_RESOURCES = PRESSURE_RESOURCES + ('vmem',)
 DAILY_LVE_ZONE = dt.timezone(dt.timedelta(hours=-3))
 DAILY_LVE_TIMEOUT_SECONDS = 45
@@ -1184,16 +1148,17 @@ def collect_daily_lve(out, state, profile, now):
                           'lve_daily:missing_faults', 'lve_daily:invalid_fault', 'lve_daily:missing_resources'):
             diagnostic['reason'] = str(error)
         out.log('collector_error', component='lve_daily', **diagnostic, level='warning')
-        # The pilot should not interrupt the normal collector or its health.
+        # Keep the other readers running while the daily report awaits retry.
         return 'retry_pending'
 
 
 def scheduled_daily_lve(out, state, profile, now, elapsed):
+    if profile.get('capabilities', {}).get('lve_status') in ('not_supported', 'not_applicable'):
+        return None
     if profile.get('daily_lve_external') and Path('/etc/cron.d/duplika-lve-daily').is_file():
         return 'external_cron'
     entry = state.setdefault('daily_lve_v38', {})
-    pressure_attempt = state.get('pressure_v27', {}).get('attempt_at', 0)
-    if now - pressure_attempt >= 45 and elapsed < DAILY_LVE_START_BUDGET_SECONDS:
+    if elapsed < DAILY_LVE_START_BUDGET_SECONDS:
         entry['status'] = collect_daily_lve(out, state, profile, now)
     # Skipping a busy cycle does not represent a state change.
     return entry.get('status')
@@ -1201,7 +1166,10 @@ def scheduled_daily_lve(out, state, profile, now, elapsed):
 
 def essential_inventory(state):
     paths = (Path('/etc/userdomains'), Path('/etc/passwd'))
-    fingerprint = [[p.stat().st_dev, p.stat().st_ino, p.stat().st_size, p.stat().st_mtime_ns] for p in paths]
+    fingerprint = []
+    for path in paths:
+        info = path.stat()
+        fingerprint.append([info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns])
     cached = state.get('inventory_v27')
     if cached is None or cached.get('fingerprint') != fingerprint:
         domains, accounts, users = inventory()
@@ -1237,7 +1205,7 @@ def main_essential(profile, state, out, started):
     components = {'processes': 'disabled', 'access': 'disabled', 'wordpress': 'disabled'}
     if profile.get('disk_io_observer'):
         components['disk_io'] = collect_disk_io(out, state, now, state['boot_id'], profile.get('disk_io_generation'))
-    components['lve'] = collect_pressure(out, state, profile, now)
+    components['lve'] = 'daily_only' if profile.get('capabilities', {}).get('lve_status') == 'available' else 'not_supported'
     components['errors'] = 'disabled'
     readers = [('kernel', lambda: collect_kernel(out, state, accounts, users))]
     if not profile.get('base_monitoring') or profile.get('capabilities', {}).get('os_id') == 'cloudlinux':
@@ -1276,11 +1244,10 @@ def main_essential(profile, state, out, started):
         out.metric('duplika_cpanel_accounts', len(accounts))
         out.metric('duplika_cpanel_domains', len(domains))
         state['inventory_sent_at_v27'] = now
-    # The daily query shares the existing observer, but not a cycle that has
-    # just queried the 15-minute pressure window. Keep its service budget bounded.
+    # Defer the daily query when other readers already used the cycle budget.
     daily_status = scheduled_daily_lve(out, state, profile, now, time.monotonic() - started)
     if daily_status is not None:
-        components['lve_daily'] = daily_status
+        components['lve_daily'] = 'failed' if daily_status == 'retry_pending' else daily_status
     import resource
     usage, children = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
     duration = time.monotonic() - started

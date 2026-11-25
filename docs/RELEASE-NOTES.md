@@ -1,3 +1,24 @@
+# 4.0.0-rc48 — política LVE diaria
+
+La política esencial usa el cierre diario completo de CloudLinux para WHMCS.
+Retira la consulta recurrente de 15 minutos y sus métricas auxiliares.
+El diagnóstico dirigido sigue disponible. El preflight puede comprobar la
+lectura histórica una vez. Verificar cobertura del cierre y cantidad de filas
+en el addon tras actualizar. Los paneles del histórico intradiario dejarán
+de recibir datos para esta versión. Un cron diario externo reconocido conserva
+la responsabilidad de su cierre. Se reconoce también la variante revisada con recuperación por fecha.
+
+El observador publica el intervalo de I/O al muestrear y la cantidad de dispositivos al leerlos. Una lectura del inventario consulta una vez los metadatos de cada archivo. Un cierre interno en reintento se refleja en la salud del colector.
+
+# 4.0.0-rc47 — candidata: frecuencia de estado SMART
+
+El estado y la edad SMART se publican al obtener una lectura y cada cinco minutos.
+
+# 4.0.0-rc46 — candidata: métricas LVE según capacidad
+
+- El colector omite el historial y sus métricas de salud cuando LVE no aplica o no es compatible.
+- La actualización desde rc45 verifica el contenido instalado y conserva el transporte Vector.
+
 # 4.0.0-rc45 — candidata: perfil esencial predeterminado
 
 - Las altas nuevas usan `essential-base-v1` en cPanel con AlmaLinux o CloudLinux.

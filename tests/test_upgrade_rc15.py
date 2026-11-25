@@ -140,7 +140,7 @@ class Rc40UpgradeTests(UpgradeTests):
         rebaseline()
         with self.assertRaisesRegex(RuntimeError, 'unreviewed_v4_runtime'):
             i.validate_v4_upgrade(TARGET, {})
-        storage.write_bytes((i.HERE / 'storage.py').read_bytes())
+        storage.write_bytes(released_files('4.0.0-rc42')['storage.py'])
         rebaseline()
         self.assertEqual(i.validate_v4_upgrade(TARGET, {}), self.meta)
 
@@ -183,3 +183,11 @@ class Rc43UpgradeTests(UpgradeTests):
 
 class Rc44UpgradeTests(UpgradeTests):
     previous_version = '4.0.0-rc44'
+
+
+class Rc45UpgradeTests(UpgradeTests):
+    previous_version = '4.0.0-rc45'
+
+
+class Rc47UpgradeTests(UpgradeTests):
+    previous_version = '4.0.0-rc47'
