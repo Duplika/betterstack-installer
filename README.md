@@ -1,4 +1,4 @@
-# Better Stack installer — candidata rc48
+# Better Stack installer — candidata rc49
 
 La política esencial usa el cierre diario completo de CloudLinux para WHMCS.
 Retira la consulta recurrente de 15 minutos y sus métricas auxiliares.
@@ -118,8 +118,8 @@ bash /root/installer-rc36.sh upgrade --base-monitoring
 bash /root/installer-rc36.sh verify
 
 # Alta nueva, tras configure/credential con el mismo instalador:
-bash /root/installer-rc48.sh preflight --target /root/perfil.json
-bash /root/installer-rc48.sh install --target /root/perfil.json --credential /root/fuente.json
+bash /root/installer-rc49.sh preflight --target /root/perfil.json
+bash /root/installer-rc49.sh install --target /root/perfil.json --credential /root/fuente.json
 ```
 
 El upgrade respalda y revierte ante fallos, y sólo reinicia el transporte del

@@ -1,3 +1,7 @@
+# 4.0.0-rc49 — actualización menor de CloudLinux
+
+El observador acepta la transición 9.8 a 9.9 si todas las demás capacidades detectadas coinciden con el manifiesto.
+
 # 4.0.0-rc48 — política LVE diaria
 
 La política esencial usa el cierre diario completo de CloudLinux para WHMCS.

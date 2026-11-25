@@ -710,11 +710,11 @@ def validate_observer_profile(meta, profile):
         raise RuntimeError('upgrade:observer_profile_version_mismatch')
 
 
-def reviewed_almalinux_update(old, caps):
+def reviewed_os_minor_update(old, caps):
     previous = old.get('capabilities')
     return (old.get('pipeline_variant') == 'observer-v4'
             and isinstance(previous, dict)
-            and previous.get('os_id') == 'almalinux'
+            and previous.get('os_id') in ('almalinux', 'cloudlinux')
             and previous.get('os_version') == '9.8'
             and caps == dict(previous, os_version='9.9'))
 
@@ -749,11 +749,12 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc45'] = 'upgrade_rc45.json'
     reviewed_versions['4.0.0-rc46'] = 'upgrade_rc46.json'
     reviewed_versions['4.0.0-rc47'] = 'upgrade_rc47.json'
+    reviewed_versions['4.0.0-rc48'] = 'upgrade_rc48.json'
     if (previous not in reviewed_versions or old.get('installer_version') != previous
             or identity.read(BASE / 'complete') != (previous + '\n').encode()):
         raise RuntimeError('upgrade:unreviewed_v4_version')
     if (old.get('target') != target
-            or (old.get('capabilities') != caps and not reviewed_almalinux_update(old, caps))):
+            or (old.get('capabilities') != caps and not reviewed_os_minor_update(old, caps))):
         raise RuntimeError('upgrade:target_or_capabilities_changed')
     reviewed = load(HERE / reviewed_versions[previous])
     if 'identity_service_template' in reviewed:
@@ -768,7 +769,7 @@ def validate_v4_upgrade(target, caps):
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    had_storage = had_storage or previous in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47')
+    had_storage = had_storage or previous in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -910,7 +911,7 @@ def upgrade_v4(target, caps):
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48')
     if not refresh_observer:
         cron = None
     if cron is not None and cron[0] != cron[1]:

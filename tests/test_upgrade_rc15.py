@@ -191,3 +191,20 @@ class Rc45UpgradeTests(UpgradeTests):
 
 class Rc47UpgradeTests(UpgradeTests):
     previous_version = '4.0.0-rc47'
+
+
+    def test_cloudlinux_minor_upgrade_preserves_all_other_capabilities(self):
+        previous = {'os_id': 'cloudlinux', 'os_version': '9.8', 'edition': 'CloudLinux OS Shared Pro',
+                    'lve_status': 'available', 'isolates_supported': True}
+        self.meta['capabilities'] = previous
+        (i.BASE / 'manifest.json').write_text(json.dumps(self.meta))
+        updated = dict(previous, os_version='9.9')
+        self.assertEqual(i.validate_v4_upgrade(TARGET, updated), self.meta)
+        for changed in (dict(updated, edition='CloudLinux OS Solo'), dict(updated, lve_status='not_supported'),
+                        dict(updated, os_version='10.0'), dict(updated, os_id='almalinux')):
+            with self.subTest(changed=changed), self.assertRaisesRegex(RuntimeError, 'target_or_capabilities_changed'):
+                i.validate_v4_upgrade(TARGET, changed)
+
+
+class Rc48UpgradeTests(UpgradeTests):
+    previous_version = '4.0.0-rc48'
