@@ -503,6 +503,10 @@ WantedBy=timers.target
         meta['base_template_id'] = base_monitoring.TEMPLATE
         meta['monitoring_capabilities'] = base_monitoring.contract(pipeline_variant == 'observer-v4', caps)
         meta.setdefault('resource_sampling', {}).update(host_seconds=60, filesystem_seconds=60, network_seconds=300, disk_io_seconds=300, cpu_aggregation='host_sum_by_mode')
+    if pipeline_variant == 'observer-v4' and load(profile_path).get('dedicated_host'):
+        meta['monitoring_policy'] = 'dedicated-host-v1'
+        meta['monitoring_capabilities'].update(lve_history=False, account_diagnostics=False, application_logs='disabled')
+        meta['resource_sampling'].update(lve_seconds=None, history_only=False, inventory_seconds=None)
     try:
         if migration_review:
             meta['migration_review'] = migration_review
@@ -757,6 +761,7 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc45'] = 'upgrade_rc45.json'
     reviewed_versions['4.0.0-rc46'] = 'upgrade_rc46.json'
     reviewed_versions['4.0.0-rc47'] = 'upgrade_rc47.json'
+    reviewed_versions['4.0.0-rc51'] = 'upgrade_rc51.json'
     reviewed_versions['4.0.0-rc50'] = 'upgrade_rc50.json'
     reviewed_versions['4.0.0-rc49'] = 'upgrade_rc49.json'
     reviewed_versions['4.0.0-rc48'] = 'upgrade_rc48.json'
@@ -779,7 +784,7 @@ def validate_v4_upgrade(target, caps):
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    had_storage = had_storage or previous in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50')
+    had_storage = had_storage or previous in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -935,7 +940,7 @@ def external_lve_cron(target, caps):
     return original, quiet
 
 
-def upgrade_v4(target, caps):
+def upgrade_v4(target, caps, dedicated_host=False):
     old = validate_v4_upgrade(target, caps)
     identity.status(quiet=True)  # Must be healthy before any write or service change.
     cron = external_lve_cron(target, caps)
@@ -943,7 +948,9 @@ def upgrade_v4(target, caps):
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51')
+    if dedicated_host and (not refresh_observer or cron is not None):
+        raise RuntimeError('dedicated:incompatible_publisher_or_observer')
     if not refresh_observer:
         cron = None
     if cron is not None:
@@ -991,6 +998,8 @@ def upgrade_v4(target, caps):
                             execute(['restorecon', '-F', str(DAILY_LVE_CRON)])
                     update_daily_publisher()
                     profile['daily_lve_external'] = True
+                if dedicated_host:
+                    profile['dedicated_host'] = True
                 first_cycle_after = time.time()
                 write(CLOUD / 'collector.py', (HERE / 'collector.py').read_bytes(), 0o700)
                 profile['agent_version'] = VERSION
@@ -1181,6 +1190,7 @@ def main():
     p.add_argument('--simplify-context', action='store_true',
                    help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
     p.add_argument('--aggregate-errors', action='store_true', help='Agrupar errores repetidos sólo en la base minimal-v4 revisada')
+    p.add_argument('--dedicated-host', action='store_true', help='Actualizar un observer esencial para recolectar sólo métricas del servidor')
     p.add_argument('--base-monitoring', action='store_true', help='Instalar o migrar a la base esencial común con CPU agregada')
     p.add_argument('--minimal-host', action='store_true', help='Retirar lectores de logs de transportes heredados revisados; conservar métricas esenciales')
     p.add_argument('--essential-monitoring', action='store_true', help='Monitoreo esencial explícito sobre observer-v4 o transportes AlmaLinux revisados')
@@ -1188,6 +1198,10 @@ def main():
     p.add_argument('--minutes', type=int, default=30)
     p.add_argument('--readers', nargs='+', choices=['access', 'lve', 'processes', 'wordpress'])
     args = p.parse_args()
+    if args.dedicated_host and (args.operation not in ('preflight', 'upgrade') or any((
+            args.base_monitoring, args.minimal_host, args.essential_monitoring, args.aggregate_errors,
+            args.simplify_context, args.recover_bootstrap, args.recover_partial))):
+        p.error('--dedicated-host requiere preflight o upgrade sin otras migraciones')
     if (args.user or args.readers or args.minutes != 30) and not args.operation.startswith('diagnostic-'):
         p.error('--user/--readers/--minutes sólo se usan con diagnóstico explícito')
     if args.base_monitoring and (args.operation not in ('preflight','install','upgrade') or args.minimal_host or args.essential_monitoring or args.aggregate_errors or args.simplify_context or args.recover_partial or args.recover_bootstrap):
@@ -1216,6 +1230,8 @@ def main():
         return
     if args.operation.startswith('diagnostic-'):
         import essential_upgrade
+        if args.operation == 'diagnostic-enable' and (CLOUD / 'profile.json').exists() and load(CLOUD / 'profile.json').get('dedicated_host'):
+            raise RuntimeError('dedicated:account_diagnostics_disabled')
         essential_upgrade.diagnostic(sys.modules[__name__], args)
         return
     if args.operation == 'storage-preflight':
@@ -1251,6 +1267,25 @@ def main():
     caps = secure_target(target)
     if args.operation == 'preflight':
         cgroups_pilot(target, caps)
+    if args.dedicated_host:
+        meta = load(BASE / 'manifest.json')
+        if (meta.get('pipeline_variant') != 'observer-v4' or target.get('wordpress')
+                or DAILY_LVE_CRON.exists() or not meta.get('migration_review', {}).get('base_monitoring')):
+            raise RuntimeError('dedicated:requires_base_observer_without_external_publisher')
+        profile = load(CLOUD / 'profile.json')
+        if profile.get('monitoring_policy') != 'essential-v1' or profile.get('wordpress'):
+            raise RuntimeError('dedicated:requires_essential_profile_without_sites')
+        if meta['agent_version'] == VERSION:
+            validate_current(target, caps)
+            if not profile.get('dedicated_host'):
+                raise RuntimeError('dedicated:select_during_version_upgrade')
+        elif args.operation == 'preflight':
+            validate_v4_upgrade(target, caps)
+            identity.status(quiet=True)
+        else:
+            upgrade_v4(target, caps, dedicated_host=True)
+            request_publication(target)
+        return
     if args.base_monitoring:
         import base_monitoring
         if (BASE/'complete').exists():

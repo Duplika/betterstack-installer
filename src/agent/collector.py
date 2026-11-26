@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc51'
+COLLECTOR_RELEASE = '4.0.0-rc52'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -1248,6 +1248,19 @@ def main_essential(profile, state, out, started):
     daily_status = scheduled_daily_lve(out, state, profile, now, time.monotonic() - started)
     if daily_status is not None:
         components['lve_daily'] = 'failed' if daily_status == 'retry_pending' else daily_status
+    finish_essential(out, state, started, now, components, diagnostic, ESSENTIAL_POLICY,
+                     accounts=len(accounts), domains=len(domains))
+
+
+def main_dedicated(profile, state, out, started):
+    now = time.time()
+    components = dict.fromkeys(('processes', 'lve', 'access', 'wordpress', 'kernel', 'errors'), 'disabled')
+    if profile.get('disk_io_observer'):
+        components['disk_io'] = collect_disk_io(out, state, now, state['boot_id'], profile.get('disk_io_generation'))
+    finish_essential(out, state, started, now, components, None, 'dedicated-host-v1')
+
+
+def finish_essential(out, state, started, now, components, diagnostic, policy, **inventory_counts):
     import resource
     usage, children = resource.getrusage(resource.RUSAGE_SELF), resource.getrusage(resource.RUSAGE_CHILDREN)
     duration = time.monotonic() - started
@@ -1260,13 +1273,13 @@ def main_essential(profile, state, out, started):
     out.metric('duplika_collector_failed_components', len(failed))
     out.metric('duplika_monitoring_policy_essential', 1)
     out.metric('duplika_monitoring_diagnostic_active', int(bool(diagnostic)))
-    out.log('collector_heartbeat', status=status, accounts=len(accounts), domains=len(domains), components=components)
+    out.log('collector_heartbeat', status=status, components=components, **inventory_counts)
     out.flush()
     atomic_json(STATE / 'collector-health.json', {'at': time.time(), 'started_at': now,
-        'agent_version': COLLECTOR_RELEASE, 'monitoring_policy': ESSENTIAL_POLICY, 'components': components,
+        'agent_version': COLLECTOR_RELEASE, 'monitoring_policy': policy, 'components': components,
         'status': status, 'boot_id': state['boot_id']})
     atomic_json(STATE / 'state.json', state)
-    print(json.dumps({'status': status, 'policy': ESSENTIAL_POLICY, 'components': components,
+    print(json.dumps({'status': status, 'policy': policy, 'components': components,
                       'logs': len(out.logs), 'metrics': len(out.metrics)}))
 
 
@@ -1293,6 +1306,8 @@ def main():
         out = Output(profile, state)
         started = time.monotonic()
         if profile.get('monitoring_policy') == ESSENTIAL_POLICY:
+            if profile.get('dedicated_host'):
+                return main_dedicated(profile, state, out, started)
             return main_essential(profile, state, out, started)
         domains, accounts, users = inventory()
         components = {}

@@ -1,3 +1,7 @@
+## 4.0.0-rc52
+
+Perfil optativo dedicated-host-v1 para actualizaciones de VPS con observer esencial. Mantiene las capacidades reales del sistema y aplica el alcance al recolectar.
+
 ## 4.0.0-rc51
 
 Admite los dos transportes mínimos revisados de rc37 y el cambio de AlmaLinux 9.8 a 9.9 con idénticas capacidades. Conserva el grafo de Vector.

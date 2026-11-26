@@ -1,4 +1,6 @@
-# Better Stack installer — candidata rc51
+# Better Stack installer — candidata rc52
+
+Para VPS dedicados con la base esencial instalada, usar `preflight --dedicated-host` y `upgrade --dedicated-host`. Este perfil conserva las métricas del host, almacenamiento y salud del colector. Omite lectores por cuenta, diagnóstico dirigido y cierres LVE.
 
 La actualización desde los perfiles mínimos de AlmaLinux en rc37 conserva las fuentes de métricas del host y valida su configuración antes de actualizar.
 
