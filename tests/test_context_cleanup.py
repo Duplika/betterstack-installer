@@ -66,8 +66,8 @@ class CleanupTests(unittest.TestCase):
             path.write_text('ID=almalinux\nVERSION_ID="8.10"\n')
             self.assertEqual(capabilities.detect(path)['os_version'], '8.10')
             path.write_text('ID=cloudlinux\nVERSION_ID="8.10"\n')
-            with self.assertRaisesRegex(RuntimeError, 'edition_detector_missing'):
-                capabilities.detect(path, finder=lambda name: None)
+            caps = capabilities.detect(path, finder=lambda name: None)
+            self.assertEqual(caps['lve_probe_error'], 'cloudlinux:edition_detector_missing')
 
     def test_new_almalinux8_install_refused_before_writes(self):
         with patch.object(installer, 'write') as write:

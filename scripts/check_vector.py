@@ -12,8 +12,35 @@ import threading
 import copy
 import config as observer_config
 import legacy_essential
+import filesystem_aliases
 import minimal_host
 import base_monitoring
+
+
+def check_aliases(vector):
+    host = 'cloud.example.net'
+    base = {'sources': {}, 'transforms': {'base_cpu_route': {}},
+            'sinks': {'duplika_metrics': {'inputs': []}}}
+    spec = filesystem_aliases.prepare(base, ['/home'], host)
+    graph = {'sources': {'samples': {'type':'stdin', 'decoding':{'codec':'json'}}},
+             'transforms': {k:v for k,v in spec['transforms'].items() if k.startswith('filesystem_')},
+             'sinks': {'out': {'type':'console', 'target':'stdout', 'inputs':['filesystem_emit','filesystem_route._unmatched'],
+                               'encoding':{'codec':'json'}}}}
+    graph['transforms']['filesystem_route']['inputs'] = ['samples']
+    rows = []
+    for stamp, mount, device, value in [(1,'/','a',10),(1,'/home','a',10),(1,'/tmp','b',20),
+            (2,'/','a',10),(2,'/home','a',11),(3,'/home','a',10),(4,'/','a',10),(4,'/home','b',10)]:
+        rows.append({'dt': '2026-01-01T00:00:%02dZ' % (stamp*10), 'tags': {'device':device,'filesystem':'ext4','mountpoint':mount,'host':host},
+                     'name':'filesystem_total_bytes','gauge':{'value':value}})
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder)/'aliases.json'
+        path.write_text(json.dumps(graph))
+        result = subprocess.run([vector,'--config-json',str(path)], input=''.join(json.dumps(row)+'\n' for row in rows),
+                                text=True, capture_output=True, check=True, timeout=15)
+    observed = [{k:v for k,v in json.loads(line).items() if k in rows[0]} for line in result.stdout.splitlines()]
+    expected = [row for index,row in enumerate(rows) if index != 1]
+    assert sorted(json.dumps(row, sort_keys=True) for row in observed) == sorted(
+        json.dumps(row, sort_keys=True) for row in expected), observed
 
 
 def main():
@@ -52,6 +79,9 @@ def main():
             minimal_path.write_text(json.dumps(minimal))
             common_path=Path(folder)/'common-base.json'
             common_path.write_text(json.dumps(base_monitoring.cpu_graph(minimal,'legacy_host_essential','duplika_metrics')))
+            alias_path = Path(folder)/'aliases.json'
+            alias_path.write_text(json.dumps(filesystem_aliases.prepare(json.loads(common_path.read_text()), ['/home'], profile['host'])))
+            subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(alias_path)], check=True, timeout=120)
             subprocess.run([args.vector,'test','--config-json',str(common_path)],check=True,timeout=120)
             subprocess.run([args.vector,'validate','--no-environment','--config-json',str(common_path)],check=True,timeout=120)
             subprocess.run([args.vector, 'test', '--config-json', str(minimal_path)], check=True, timeout=120)
@@ -74,6 +104,7 @@ def main():
         path = Path(folder) / 'essential.json'; path.write_text(json.dumps(essential))
         subprocess.run([args.vector, 'test', '--config-json', str(path)], check=True, timeout=120)
         subprocess.run([args.vector, 'validate', '--no-environment', '--config-json', str(path)], check=True, timeout=120)
+    check_aliases(args.vector)
     check_base_cpu(args.vector)
     common_observer=observer_config.make_config({'host':'cloud.example.net','server_ip':'203.0.113.20',
         'monitoring_policy':'essential-v1','disk_io_observer':True,'base_monitoring':True},'TEST_SECRET','s1234568.us-west-2a.betterstackdata.com')

@@ -6,13 +6,24 @@ import re
 import shutil
 import subprocess
 
-VERSION = '4.0.0-rc52'
+VERSION = '4.0.0-rc53'
 SCHEMA = 1
 MAX_OUTPUT = 8 * 1024 * 1024
 
 
 class ProbeError(RuntimeError):
     pass
+
+
+SYSTEM_MOUNTS = ('/', '/boot', '/etc', '/home', '/root', '/usr', '/var', '/tmp')
+
+
+def mount_flags_source():
+    paths = '|'.join(path.replace('/', r'\/') for path in SYSTEM_MOUNTS)
+    program = ('$5 ~ /^(' + paths + ')$/ {print $5, '
+               '($6 ~ /(^|,)ro(,|$)/ || $NF ~ /(^|,)ro(,|$)/ ? 1 : 0)}')
+    return {'type': 'exec', 'mode': 'scheduled', 'scheduled': {'exec_interval_secs': 60},
+            'command': ['/usr/bin/awk', program, '/proc/1/mountinfo']}
 
 
 def trusted_executable(name):
@@ -91,6 +102,17 @@ def detect(osrelease=Path('/etc/os-release'), runner=run, finder=trusted_executa
               'isolates_supported': False, 'mysql_governor': 'unavailable'}
     if distro == 'almalinux':
         return result
+    try:
+        return detect_lve(result, runner, finder)
+    except ProbeError as error:
+        # Optional package failures are visible. Unsafe binaries remain fatal.
+        if str(error).startswith('unsafe_executable:'):
+            raise
+        result.update(lve_status='unavailable', lve_probe_error=str(error))
+        return result
+
+
+def detect_lve(result, runner, finder):
     detector = finder('cldetect')
     if not detector:
         raise ProbeError('cloudlinux:edition_detector_missing')

@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 import urllib.request
-from capabilities import VERSION, SCHEMA
+from capabilities import VERSION, SCHEMA, mount_flags_source, SYSTEM_MOUNTS
 import health
 
 BASE = Path('/etc/duplika-betterstack-v4')
@@ -45,8 +45,11 @@ def destination(config, target, allow_metrics_only=False):
         tokens.add(sink['auth']['token'])
     expected = {origin + '/', origin + '/metrics'}
     if allow_metrics_only:
-        if (set(config.get('sources', {})) != {'duplika_host', 'duplika_host_slow'}
-                or any(x.get('type') != 'host_metrics' for x in config['sources'].values())
+        sources = dict(config.get('sources', {}))
+        flags = sources.pop('mount_flags', None)
+        if (set(sources) != {'duplika_host', 'duplika_host_slow'}
+                or any(x.get('type') != 'host_metrics' for x in sources.values())
+                or (flags is not None and flags != mount_flags_source())
                 or set(config.get('sinks', {})) != {'duplika_metrics'}):
             raise RuntimeError('unexpected_minimal_graph')
         expected = {origin + '/metrics'}
@@ -100,6 +103,78 @@ def atomic(path, obj):
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def cgroup_mode(lines):
+    mounted = set()
+    for line in lines:
+        left, sep, right = line.partition(' - ')
+        fields = left.split()
+        if sep and len(fields) > 4 and right.split():
+            mounted.add(right.split()[0])
+    modes = mounted & {'cgroup', 'cgroup2'}
+    if len(modes) == 2:
+        return 'hybrid'
+    if 'cgroup2' in modes:
+        return 'v2'
+    return 'v1' if 'cgroup' in modes else 'unknown'
+
+
+def module_inventory(kernel):
+    from capabilities import trusted_executable, ProbeError
+    modules = Path('/sys/module')
+    names = ('kmodlve', 'lve')
+    loaded = next((name for name in names if (modules / name).is_dir()), None)
+    value = {'loaded': bool(loaded), 'loaded_version': None, 'disk_version': None,
+             'comparison': 'unknown'}
+    def version(raw):
+        raw = raw.strip()
+        return raw if re.fullmatch(r'[a-zA-Z0-9_.+-]{1,128}', raw) else None
+    if loaded:
+        try:
+            value['loaded_version'] = version((modules / loaded / 'version').read_text())
+        except OSError:
+            pass
+    try:
+        command = trusted_executable('modinfo')
+        for name in ((loaded,) if loaded else names):
+            if command:
+                result = health.run([command, '-k', kernel, '-F', 'version', name], timeout=4)
+                if result.returncode == 0 and version(result.stdout):
+                    value['disk_version'] = version(result.stdout)
+                    break
+    except (OSError, ValueError, ProbeError, subprocess.TimeoutExpired):
+        pass
+    if value['loaded_version'] and value['disk_version']:
+        value['comparison'] = 'match' if value['loaded_version'] == value['disk_version'] else 'mismatch'
+    return value
+
+
+def host_inventory(caps, persist, acknowledged=None):
+    boot = Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+    now = time.time()
+    receipt = STATE / 'host-inventory.json'
+    try:
+        cached = json.loads(read(receipt))
+    except FileNotFoundError:
+        cached = {}
+    if cached.get('boot') == boot:
+        pending = acknowledged is not None and cached['sample']['observed_at'] != acknowledged
+        if pending or 0 <= now - cached['at'] < 86400:
+            return cached['sample']
+    sample = {'observed_at': datetime.datetime.fromtimestamp(now, datetime.timezone.utc).isoformat(),
+              'kernel': os.uname().release, 'cgroups': 'unknown'}
+    try:
+        with Path('/proc/self/mountinfo').open() as mounts:
+            sample['cgroups'] = cgroup_mode(mounts)
+    except OSError:
+        pass
+    if caps.get('os_id') == 'cloudlinux' and caps.get('edition') in (
+            'CloudLinux OS Shared', 'CloudLinux OS Shared Pro', 'CloudLinux OS Admin'):
+        sample['lve'] = module_inventory(sample['kernel'])
+    if persist:
+        atomic(receipt, {'boot': boot, 'at': now, 'sample': sample})
+    return sample
 
 
 def cgroups_sample(meta, now):
@@ -264,10 +339,24 @@ def status(publish=False, quiet=False):
         event['monitoring_capabilities'] = meta['monitoring_capabilities']
     if meta.get('monitoring_policy'):
         event['monitoring_policy'] = meta['monitoring_policy']
-    if meta.get('cgroups_inventory') and meta['capabilities']['os_id'] == 'cloudlinux':
+    if meta.get('cgroups_inventory') and meta['capabilities']['os_id'] == 'cloudlinux' and meta['capabilities'].get('edition') != 'CloudLinux OS Solo':
         event['cgroups_inventory'] = cgroups_inventory(meta, uri, token, publish and not drift,
                                                        datetime.datetime.now(datetime.timezone.utc))
+    if meta.get('migration_review', {}).get('filesystem_aliases'):
+        # The host namespace distinguishes actual read-only mounts from service sandbox mounts.
+        try:
+            with Path('/proc/1/mountinfo').open() as rows:
+                flags = {}
+                for row in rows:
+                    left, sep, right = row.partition(' - ')
+                    fields, fs = left.split(), right.split()
+                    if sep and len(fields) >= 6 and len(fs) >= 3 and fields[4] in SYSTEM_MOUNTS:
+                        flags[fields[4]] = 'ro' in fields[5].split(',') or 'ro' in fs[2].split(',')
+            event['mount_readonly'] = flags
+        except OSError:
+            event['mount_flags_status'] = 'unavailable'
     old = json.loads(read(STATE / 'last-send.json')) if (STATE / 'last-send.json').exists() else {}
+    event['host_inventory'] = host_inventory(meta['capabilities'], publish and not drift, old.get('host_inventory_at', ''))
     digest = hashlib.sha256(canonical(hashes)).hexdigest()
     stable = {key: value for key, value in event.items() if key != 'dt'}
     stable['integrity_digest'] = digest
@@ -293,7 +382,7 @@ def status(publish=False, quiet=False):
             send(uri + 'metrics', token, reboot_rows)
         send(uri, token, event)
         atomic(STATE / 'last-send.json', {'integrity_digest': digest,
-               'status_digest': status_digest,
+               'status_digest': status_digest, 'host_inventory_at': event['host_inventory']['observed_at'],
                'inventory_at': time.time() if event.get('inventory_daily') else old.get('inventory_at', 0)})
     if quiet:
         pass

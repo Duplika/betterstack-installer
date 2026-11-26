@@ -69,10 +69,10 @@ class ScaleTests(unittest.TestCase):
             self.assertEqual(caps['os_version'], '8.10')
             self.assertEqual(caps['lve_status'], 'available')
             self.assertTrue(caps['isolates_supported'])
-            with self.assertRaisesRegex(capabilities.ProbeError, 'lve:invalid_json'):
-                capabilities.detect(path, lambda args: subprocess.CompletedProcess(
-                    args, 0, 'CloudLinux OS Shared Pro' if '--detect-edition' in args else 'invalid', ''),
-                    lambda name: '/usr/bin/' + name)
+            degraded = capabilities.detect(path, lambda args: subprocess.CompletedProcess(
+                args, 0, 'CloudLinux OS Shared Pro' if '--detect-edition' in args else 'invalid', ''),
+                lambda name: '/usr/bin/' + name)
+            self.assertEqual(degraded['lve_probe_error'], 'lve:invalid_json')
 
     def test_thousand_busy_domains_all_sampled_with_same_budget(self):
         with tempfile.TemporaryDirectory() as folder:

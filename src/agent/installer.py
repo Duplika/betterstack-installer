@@ -481,7 +481,7 @@ WantedBy=timers.target
         meta['monitoring_policy'] = load(profile_path).get('monitoring_policy', 'observer-v4')
     if storage_enabled:
         meta['storage_observer'] = True
-    if caps.get('os_id') == 'cloudlinux':
+    if caps.get('os_id') == 'cloudlinux' and caps.get('edition') in ('CloudLinux OS Shared', 'CloudLinux OS Shared Pro', 'CloudLinux OS Admin'):
         meta['cgroups_inventory'] = True
     if (migration_review or {}).get('essential_host_sampling'):
         import legacy_essential
@@ -717,6 +717,12 @@ def validate_observer_profile(meta, profile):
 
 
 def reviewed_os_minor_update(old, caps):
+    before = old.get('capabilities') or {}
+    if (before.get('os_id') == caps.get('os_id') == 'cloudlinux'
+            and before.get('os_version') == caps.get('os_version')
+            and 'unavailable' in (before.get('lve_status'), caps.get('lve_status'))
+            and (not before.get('edition') or not caps.get('edition') or before['edition'] == caps['edition'])):
+        return True
     previous = old.get('capabilities')
     import legacy_upgrade
     import minimal_host
@@ -761,6 +767,7 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc45'] = 'upgrade_rc45.json'
     reviewed_versions['4.0.0-rc46'] = 'upgrade_rc46.json'
     reviewed_versions['4.0.0-rc47'] = 'upgrade_rc47.json'
+    reviewed_versions['4.0.0-rc52'] = 'upgrade_rc52.json'
     reviewed_versions['4.0.0-rc51'] = 'upgrade_rc51.json'
     reviewed_versions['4.0.0-rc50'] = 'upgrade_rc50.json'
     reviewed_versions['4.0.0-rc49'] = 'upgrade_rc49.json'
@@ -784,7 +791,7 @@ def validate_v4_upgrade(target, caps):
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    had_storage = had_storage or previous in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51')
+    had_storage = had_storage or previous in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51', '4.0.0-rc52')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -948,7 +955,7 @@ def upgrade_v4(target, caps, dedicated_host=False):
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51', '4.0.0-rc52')
     if dedicated_host and (not refresh_observer or cron is not None):
         raise RuntimeError('dedicated:incompatible_publisher_or_observer')
     if not refresh_observer:
@@ -1190,6 +1197,7 @@ def main():
     p.add_argument('--simplify-context', action='store_true',
                    help='Retirar contexto cPanel y cron rutinario sólo de la base context-r6 revisada')
     p.add_argument('--aggregate-errors', action='store_true', help='Agrupar errores repetidos sólo en la base minimal-v4 revisada')
+    p.add_argument('--deduplicate-filesystems', action='store_true', help='Consolidar capacidad equivalente de montajes del perfil mínimo')
     p.add_argument('--dedicated-host', action='store_true', help='Actualizar un observer esencial para recolectar sólo métricas del servidor')
     p.add_argument('--base-monitoring', action='store_true', help='Instalar o migrar a la base esencial común con CPU agregada')
     p.add_argument('--minimal-host', action='store_true', help='Retirar lectores de logs de transportes heredados revisados; conservar métricas esenciales')
@@ -1267,6 +1275,23 @@ def main():
     caps = secure_target(target)
     if args.operation == 'preflight':
         cgroups_pilot(target, caps)
+    if args.deduplicate_filesystems:
+        if args.operation not in ('preflight', 'upgrade') or any((args.dedicated_host, args.aggregate_errors,
+                args.simplify_context, args.base_monitoring, args.minimal_host, args.essential_monitoring)):
+            p.error('--deduplicate-filesystems requiere preflight o upgrade del perfil mínimo')
+        import legacy_upgrade
+        meta = load(BASE / 'manifest.json')
+        if meta['agent_version'] == VERSION:
+            validate_current(target, caps)
+            if 'filesystem_aliases' not in meta.get('migration_review', {}):
+                raise RuntimeError('filesystem:select_during_version_upgrade')
+        elif args.operation == 'preflight':
+            legacy_upgrade.filesystem_plan(sys.modules[__name__], validate_v4_upgrade(target, caps))
+            identity.status(quiet=True)
+        else:
+            legacy_upgrade.upgrade(sys.modules[__name__], target, caps, deduplicate=True)
+            request_publication(target)
+        return
     if args.dedicated_host:
         meta = load(BASE / 'manifest.json')
         if (meta.get('pipeline_variant') != 'observer-v4' or target.get('wordpress')

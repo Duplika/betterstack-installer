@@ -1,4 +1,5 @@
 """Read-only review of the two inherited AlmaLinux transports; no pipeline rewrite."""
+import json
 import importlib.util
 import error_aggregation
 from pathlib import Path
@@ -27,7 +28,7 @@ def validate(api, old, target):
             raise RuntimeError('minimal_host:unknown_review_marker')
     active_services = services[:1] if minimal else services
     expected_oneshots = [] if minimal else [services[1][:-6] + '.service']
-    reviewed_minimal = minimal and old['agent_version'] == '4.0.0-rc37'
+    reviewed_minimal = minimal and old['agent_version'] in ('4.0.0-rc37', '4.0.0-rc50', '4.0.0-rc51', '4.0.0-rc52')
     if ((not reviewed_minimal and old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc35', '4.0.0-rc36', api.VERSION)) or old.get('storage_observer')
             or old.get('config_path') != config or old.get('profile_path') != profile
             or old.get('services') != active_services + [api.NAME + '.timer']
@@ -70,6 +71,9 @@ def validate(api, old, target):
         if base != base_monitoring.MARKER or not minimal:
             raise RuntimeError('base:unknown_review_marker')
         generated = base_monitoring.cpu_graph(generated, 'legacy_host_essential', 'duplika_metrics')
+    if 'filesystem_aliases' in old.get('migration_review', {}):
+        import filesystem_aliases
+        generated = filesystem_aliases.prepare(generated, old['migration_review']['filesystem_aliases'], target['host'], old['migration_review']['live_mount_flags'])
     # Embedded tests are inactive; all active sources/transforms/sinks must match.
     cfg.pop('tests', None); generated.pop('tests', None)
     if cfg != generated:
@@ -82,14 +86,37 @@ def validate(api, old, target):
     return old
 
 
-def upgrade(api, target, caps, aggregate_errors=False):
+def filesystem_plan(api, old):
+    import filesystem_aliases
+    if not old.get('migration_review', {}).get('minimal_host') or not old['migration_review'].get('base_monitoring'):
+        raise RuntimeError('filesystem:requires_minimal_common_base')
+    pid_args = ['systemctl', 'show', old['services'][0], '-p', 'MainPID', '--value']
+    pid = int(api.execute(pid_args).stdout)
+    if pid <= 1:
+        raise RuntimeError('filesystem:transport_pid_missing')
+    aliases = filesystem_aliases.discover(pid)
+    if int(api.execute(pid_args).stdout) != pid:
+        raise RuntimeError('filesystem:transport_restarted')
+    from capabilities import mount_flags_source
+    flags = api.run(['runuser', '-u', 'vector', '--', *mount_flags_source()['command']], timeout=8)
+    live_flags = flags.returncode == 0 and any(row in ('/ 0', '/ 1') for row in flags.stdout.splitlines())
+    print(json.dumps({'root_capacity_aliases': aliases, 'live_mount_flags': live_flags}))
+    proposed = filesystem_aliases.prepare(api.load(old['config_path']), aliases, old['target']['host'], live_flags)
+    api.context_cleanup.validate(proposed, old['vector_binary'], api.execute)
+    return proposed, aliases, live_flags
+
+
+def upgrade(api, target, caps, aggregate_errors=False, deduplicate=False):
     old = api.validate_v4_upgrade(target, caps)
     api.identity.status(quiet=True)
     paths = [*api.runtime_files(), api.BASE / 'manifest.json', api.BASE / 'complete',
              api.UNITS / (api.NAME + '.service'), api.UNITS / (api.NAME + '.timer')]
     config = error_aggregation.validate_plan(api, old) if aggregate_errors else None
+    aliases = None
+    if deduplicate:
+        config, aliases, live_flags = filesystem_plan(api, old)
     affected = [api.NAME + '.timer', api.NAME + '.service']
-    if aggregate_errors:
+    if config is not None:
         paths += [Path(old['config_path'])]
         affected += [old['services'][0]]
     transaction = api.backup(paths, affected)
@@ -97,7 +124,7 @@ def upgrade(api, target, caps, aggregate_errors=False):
     try:
         api.execute(['systemctl', 'stop', api.NAME + '.timer', api.NAME + '.service'])
         review = dict(old.get('migration_review') or {})
-        if aggregate_errors:
+        if config is not None:
             if api.identity.snapshot(old['critical_paths'], old['config_path']) != old['baseline']:
                 raise RuntimeError('aggregation:changed_during_upgrade')
             path = Path(old['config_path'])
@@ -105,7 +132,11 @@ def upgrade(api, target, caps, aggregate_errors=False):
             if api.trusted_executable('restorecon'):
                 api.execute(['restorecon', str(path)])
             api.execute(['systemctl', 'restart', old['services'][0]])
-            review['error_aggregation'] = error_aggregation.MARKER
+            if aggregate_errors:
+                review['error_aggregation'] = error_aggregation.MARKER
+            if aliases is not None:
+                review['filesystem_aliases'] = aliases
+                review['live_mount_flags'] = live_flags
         api.activate(target, caps, Path(old['config_path']), Path(old['profile_path']),
             [s for s in old['services'] if s != api.NAME + '.timer'], old['oneshots'],
             original, old['vector_binary'], old['pipeline_variant'], review)

@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc52'
+COLLECTOR_RELEASE = '4.0.0-rc53'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -505,7 +505,7 @@ def lve_values(record, section):
 
 
 def collect_lve(out, profile, selected_users=None):
-    if profile.get("capabilities", {}).get("lve_status") in ("not_supported", "not_applicable"):
+    if profile.get("capabilities", {}).get("lve_status") in ("not_supported", "not_applicable", "unavailable"):
         return "not_supported"
     command_path = profile.get('cloudlinux_top')
     if not command_path:
@@ -1045,7 +1045,7 @@ def statistics_executable():
 
 
 def query_pressure(profile, now):
-    if profile.get('capabilities', {}).get('lve_status') in ('not_supported', 'not_applicable'):
+    if profile.get('capabilities', {}).get('lve_status') in ('not_supported', 'not_applicable', 'unavailable'):
         return None
     tool = statistics_executable()
     start, end = pressure_window(now)
@@ -1153,7 +1153,7 @@ def collect_daily_lve(out, state, profile, now):
 
 
 def scheduled_daily_lve(out, state, profile, now, elapsed):
-    if profile.get('capabilities', {}).get('lve_status') in ('not_supported', 'not_applicable'):
+    if profile.get('capabilities', {}).get('lve_status') in ('not_supported', 'not_applicable', 'unavailable'):
         return None
     if profile.get('daily_lve_external') and Path('/etc/cron.d/duplika-lve-daily').is_file():
         return 'external_cron'
@@ -1271,8 +1271,9 @@ def finish_essential(out, state, started, now, components, diagnostic, policy, *
     failed = [name for name, value in components.items() if value == 'failed' or value is False]
     status = 'degraded' if failed else 'ok'
     out.metric('duplika_collector_failed_components', len(failed))
-    out.metric('duplika_monitoring_policy_essential', 1)
-    out.metric('duplika_monitoring_diagnostic_active', int(bool(diagnostic)))
+    if policy != 'dedicated-host-v1':
+        out.metric('duplika_monitoring_policy_essential', 1)
+        out.metric('duplika_monitoring_diagnostic_active', int(bool(diagnostic)))
     out.log('collector_heartbeat', status=status, components=components, **inventory_counts)
     out.flush()
     atomic_json(STATE / 'collector-health.json', {'at': time.time(), 'started_at': now,

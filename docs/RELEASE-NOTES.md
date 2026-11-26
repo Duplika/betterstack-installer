@@ -1,3 +1,9 @@
+## 4.0.0-rc53
+
+La identidad incluye kernel y cgroups cada 24 h y al cambiar de arranque. En ediciones CloudLinux con LVE se comparan el módulo cargado y la versión disponible para el kernel activo. Los fallos de sondas opcionales quedan identificados. El perfil dedicado omite los dos indicadores estáticos por ciclo.
+
+En una base mínima AlmaLinux ya instalada, `preflight --deduplicate-filesystems` verifica las vistas del servicio y prueba su configuración con Vector. `upgrade --deduplicate-filesystems` activa la consolidación de capacidad ext4 cuando los montajes equivalentes coinciden con la raíz. Las diferencias de lectura y los indicadores de solo lectura por montaje se conservan. En los otros perfiles se utilizan `preflight` y `upgrade`. Comprobar la recepción en la fuente tras `verify`.
+
 ## 4.0.0-rc52
 
 Perfil optativo dedicated-host-v1 para actualizaciones de VPS con observer esencial. Mantiene las capacidades reales del sistema y aplica el alcance al recolectar.

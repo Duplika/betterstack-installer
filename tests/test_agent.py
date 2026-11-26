@@ -39,9 +39,9 @@ class ProbeTests(unittest.TestCase):
         p,_=self.probe(edition='CloudLinux OS Shared Pro',data='{"result":"success","users":[]}')
         self.assertEqual(p['lve_status'],'available');self.assertTrue(p['isolates_supported'])
     def test_shared_invalid_json_does_not_silently_downgrade(self):
-        with self.assertRaisesRegex(c.ProbeError,'lve:invalid_json'):self.probe(edition='CloudLinux OS Shared Pro')
+        caps,_=self.probe(edition='CloudLinux OS Shared Pro');self.assertEqual(caps['lve_probe_error'],'lve:invalid_json')
     def test_unknown_edition(self):
-        with self.assertRaisesRegex(c.ProbeError,'edition_unrecognized'):self.probe(edition='unknown')
+        caps,_=self.probe(edition='unknown');self.assertEqual(caps['lve_status'],'unavailable')
     def test_stderr_separate_from_json(self):self.assertEqual(c.parse_json(result('{}',err='warning'),'probe'),{})
     def test_stage_specific_errors_no_private_output(self):
         for response,message in [(result(),'empty_stdout'),(result('private'),'invalid_json'),(result('private',2),'command_failed:exit=2')]:
