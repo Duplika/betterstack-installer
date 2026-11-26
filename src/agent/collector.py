@@ -26,7 +26,7 @@ ACCESS = re.compile(r'^\S+\s+\S+\s+\S+\s+\[[^\]]+\]\s+"(?P<method>[A-Z]+)\s+(?P<
 DOMAIN = re.compile(r'^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$')
 USER = re.compile(r'^[a-zA-Z0-9_-]{1,64}$')
 TEMPLATE_VERSION = 4
-COLLECTOR_RELEASE = '4.0.0-rc49'
+COLLECTOR_RELEASE = '4.0.0-rc50'
 
 
 SAMPLE_INTERVAL_SECONDS = 300
@@ -1137,7 +1137,7 @@ def collect_daily_lve(out, state, profile, now):
             if faults > DAILY_LVE_FAULT_THRESHOLD:
                 out.log('account_resource_daily', **report, **row)
                 published += 1
-        out.log('account_resource_daily_complete', **report, account_count=published,
+        out.log('account_resource_daily_complete', publisher='cloudlinux_observer', **report, account_count=published,
                 evaluated_account_count=len(rows), fault_threshold=DAILY_LVE_FAULT_THRESHOLD,
                 skipped_placeholders=skipped)
         entry['day'] = day

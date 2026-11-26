@@ -1,3 +1,7 @@
+# 4.0.0-rc50 — procedencia del cierre diario
+
+El marcador interno identifica al observador. El instalador reconoce las variantes revisadas del cron externo con o sin metadatos, conserva la recuperación por fecha y agrega emisor y versión al cierre. La actualización guarda el publicador en la transacción de reversión.
+
 # 4.0.0-rc49 — actualización menor de CloudLinux
 
 El observador acepta la transición 9.8 a 9.9 si todas las demás capacidades detectadas coinciden con el manifiesto.

@@ -208,3 +208,7 @@ class Rc47UpgradeTests(UpgradeTests):
 
 class Rc48UpgradeTests(UpgradeTests):
     previous_version = '4.0.0-rc48'
+
+
+class Rc49UpgradeTests(UpgradeTests):
+    previous_version = '4.0.0-rc49'

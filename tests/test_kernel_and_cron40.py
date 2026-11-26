@@ -16,7 +16,7 @@ class ObserverUpgradeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             cron = Path(directory) / 'cron'
             script = Path(directory) / 'daily'
-            script.write_bytes(b'reviewed contents')
+            script.write_bytes(b'reviewed ' + installer.DAILY_MARKER + b'**summary')
             expected_digest = hashlib.sha256(script.read_bytes()).hexdigest()
             original = (b'CRON_TZ=America/Argentina/Buenos_Aires\n'
                         b'23,38,53 0 * * * root /usr/bin/systemd-run --quiet --wait --pipe --collect '
@@ -27,6 +27,9 @@ class ObserverUpgradeTests(unittest.TestCase):
             quiet = corrected.removesuffix(b'\n') + b' >/dev/null\n'
             with patch.multiple(installer, DAILY_LVE_CRON=cron, DAILY_LVE_SCRIPT=script,
                                 DAILY_LVE_SCRIPT_DIGESTS={expected_digest}), patch.object(installer.identity, 'read', Path.read_bytes):
+                marked = installer.reviewed_daily_publisher(script.read_bytes())
+                self.assertIn(installer.DAILY_PUBLISHER, marked)
+                self.assertEqual(installer.reviewed_daily_publisher(marked), marked)
                 host = Mock(wraps='observer.example.com')
                 host.endswith.return_value = True
                 target = {'host': host}
