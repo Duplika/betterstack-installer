@@ -27,7 +27,8 @@ def validate(api, old, target):
             raise RuntimeError('minimal_host:unknown_review_marker')
     active_services = services[:1] if minimal else services
     expected_oneshots = [] if minimal else [services[1][:-6] + '.service']
-    if (old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc35', '4.0.0-rc36', api.VERSION) or old.get('storage_observer')
+    reviewed_minimal = minimal and old['agent_version'] == '4.0.0-rc37'
+    if ((not reviewed_minimal and old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc35', '4.0.0-rc36', api.VERSION)) or old.get('storage_observer')
             or old.get('config_path') != config or old.get('profile_path') != profile
             or old.get('services') != active_services + [api.NAME + '.timer']
             or old.get('oneshots') != expected_oneshots

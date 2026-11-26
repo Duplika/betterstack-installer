@@ -1,3 +1,7 @@
+## 4.0.0-rc51
+
+Admite los dos transportes mínimos revisados de rc37 y el cambio de AlmaLinux 9.8 a 9.9 con idénticas capacidades. Conserva el grafo de Vector.
+
 # 4.0.0-rc50 — procedencia del cierre diario
 
 El marcador interno identifica al observador. El instalador reconoce las variantes revisadas del cron externo con o sin metadatos, conserva la recuperación por fecha y agrega emisor y versión al cierre. La actualización guarda el publicador en la transacción de reversión.

@@ -1,4 +1,6 @@
-# Better Stack installer — candidata rc50
+# Better Stack installer — candidata rc51
+
+La actualización desde los perfiles mínimos de AlmaLinux en rc37 conserva las fuentes de métricas del host y valida su configuración antes de actualizar.
 
 La política esencial usa el cierre diario completo de CloudLinux para WHMCS.
 Retira la consulta recurrente de 15 minutos y sus métricas auxiliares.
