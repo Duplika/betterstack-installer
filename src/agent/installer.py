@@ -767,6 +767,7 @@ def validate_v4_upgrade(target, caps):
     reviewed_versions['4.0.0-rc45'] = 'upgrade_rc45.json'
     reviewed_versions['4.0.0-rc46'] = 'upgrade_rc46.json'
     reviewed_versions['4.0.0-rc47'] = 'upgrade_rc47.json'
+    reviewed_versions['4.0.0-rc53'] = 'upgrade_rc53.json'
     reviewed_versions['4.0.0-rc52'] = 'upgrade_rc52.json'
     reviewed_versions['4.0.0-rc51'] = 'upgrade_rc51.json'
     reviewed_versions['4.0.0-rc50'] = 'upgrade_rc50.json'
@@ -791,7 +792,7 @@ def validate_v4_upgrade(target, caps):
     expected = observer_base_paths() + runtime_files() + [UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     had_storage = previous in ('4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     had_storage = had_storage or previous in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    had_storage = had_storage or previous in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51', '4.0.0-rc52')
+    had_storage = had_storage or previous in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51', '4.0.0-rc52', '4.0.0-rc53')
     if had_storage:
         expected += storage_paths()
     if (old.get('pipeline_variant') != 'observer-v4' or old.get('configuration_schema') != SCHEMA
@@ -955,7 +956,7 @@ def upgrade_v4(target, caps, dedicated_host=False):
              UNITS / (NAME + '.service'), UNITS / (NAME + '.timer')]
     refresh_observer = old['agent_version'] in ('4.0.0-rc6', '4.0.0-rc7', '4.0.0-rc10', '4.0.0-rc12', '4.0.0-rc13', '4.0.0-rc15', '4.0.0-rc17', '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc26', '4.0.0-rc27')
     refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc28', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc36', '4.0.0-rc37', '4.0.0-rc38', '4.0.0-rc39', '4.0.0-rc40', '4.0.0-rc41', '4.0.0-rc42', '4.0.0-rc43')
-    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51', '4.0.0-rc52')
+    refresh_observer = refresh_observer or old['agent_version'] in ('4.0.0-rc44', '4.0.0-rc45', '4.0.0-rc46', '4.0.0-rc47', '4.0.0-rc48', '4.0.0-rc49', '4.0.0-rc50', '4.0.0-rc51', '4.0.0-rc52', '4.0.0-rc53')
     if dedicated_host and (not refresh_observer or cron is not None):
         raise RuntimeError('dedicated:incompatible_publisher_or_observer')
     if not refresh_observer:
@@ -1285,6 +1286,14 @@ def main():
             validate_current(target, caps)
             if 'filesystem_aliases' not in meta.get('migration_review', {}):
                 raise RuntimeError('filesystem:select_during_version_upgrade')
+        elif 'filesystem_aliases' in meta.get('migration_review', {}):
+            validate_v4_upgrade(target, caps)
+            print(json.dumps({'preserved_root_capacity_aliases': meta['migration_review']['filesystem_aliases']}))
+            if args.operation == 'upgrade':
+                legacy_upgrade.upgrade(sys.modules[__name__], target, caps)
+                request_publication(target)
+            else:
+                identity.status(quiet=True)
         elif args.operation == 'preflight':
             legacy_upgrade.filesystem_plan(sys.modules[__name__], validate_v4_upgrade(target, caps))
             identity.status(quiet=True)

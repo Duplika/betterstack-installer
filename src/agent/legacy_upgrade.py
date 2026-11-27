@@ -28,7 +28,7 @@ def validate(api, old, target):
             raise RuntimeError('minimal_host:unknown_review_marker')
     active_services = services[:1] if minimal else services
     expected_oneshots = [] if minimal else [services[1][:-6] + '.service']
-    reviewed_minimal = minimal and old['agent_version'] in ('4.0.0-rc37', '4.0.0-rc50', '4.0.0-rc51', '4.0.0-rc52')
+    reviewed_minimal = minimal and old['agent_version'] in ('4.0.0-rc37', '4.0.0-rc50', '4.0.0-rc51', '4.0.0-rc52', '4.0.0-rc53')
     if ((not reviewed_minimal and old['agent_version'] not in (version, '4.0.0-rc18', '4.0.0-rc19', '4.0.0-rc20', '4.0.0-rc21', '4.0.0-rc22', '4.0.0-rc23', '4.0.0-rc24', '4.0.0-rc29', '4.0.0-rc30', '4.0.0-rc31', '4.0.0-rc32', '4.0.0-rc33', '4.0.0-rc34', '4.0.0-rc35', '4.0.0-rc36', api.VERSION)) or old.get('storage_observer')
             or old.get('config_path') != config or old.get('profile_path') != profile
             or old.get('services') != active_services + [api.NAME + '.timer']
@@ -94,13 +94,13 @@ def filesystem_plan(api, old):
     pid = int(api.execute(pid_args).stdout)
     if pid <= 1:
         raise RuntimeError('filesystem:transport_pid_missing')
-    aliases = filesystem_aliases.discover(pid)
+    aliases, retained = filesystem_aliases.discover(pid)
     if int(api.execute(pid_args).stdout) != pid:
         raise RuntimeError('filesystem:transport_restarted')
     from capabilities import mount_flags_source
     flags = api.run(['runuser', '-u', 'vector', '--', *mount_flags_source()['command']], timeout=8)
     live_flags = flags.returncode == 0 and any(row in ('/ 0', '/ 1') for row in flags.stdout.splitlines())
-    print(json.dumps({'root_capacity_aliases': aliases, 'live_mount_flags': live_flags}))
+    print(json.dumps({'root_capacity_aliases': aliases, 'retained_capacity_mounts': retained, 'live_mount_flags': live_flags}))
     proposed = filesystem_aliases.prepare(api.load(old['config_path']), aliases, old['target']['host'], live_flags)
     api.context_cleanup.validate(proposed, old['vector_binary'], api.execute)
     return proposed, aliases, live_flags

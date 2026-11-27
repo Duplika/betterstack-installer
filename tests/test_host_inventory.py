@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -15,7 +16,36 @@ class ObserverRc52(test_upgrade_rc15.UpgradeTests):
     previous_version = '4.0.0-rc52'
 
 
+class ObserverRc53(test_upgrade_rc15.UpgradeTests):
+    previous_version = '4.0.0-rc53'
+
+
 class InventoryTests(unittest.TestCase):
+    def test_el9_alternate_module_name_and_exit_diagnostics(self):
+        results = [subprocess.CompletedProcess([], 1, '', 'module not found'),
+                   subprocess.CompletedProcess([], 0, '2.1-81.el9', '')]
+        with patch.object(Path, 'is_dir', return_value=False), \
+                patch('capabilities.trusted_executable', return_value='/usr/sbin/modinfo'), \
+                patch.object(identity.health, 'run', side_effect=results) as run:
+            result = identity.module_inventory('example.el9')
+        self.assertEqual(result['disk_version'], '2.1-81.el9')
+        self.assertEqual(result['comparison'], 'unknown')
+        self.assertEqual(result['disk_probe']['attempts'], [
+            {'module': 'kmodlve', 'exit_code': 1, 'reason': 'module_not_found'},
+            {'module': 'lve', 'exit_code': 0, 'reason': 'ok'}])
+        self.assertTrue(all(call.args[0][2] == 'example.el9' for call in run.call_args_list))
+
+    def test_module_absent_and_probe_timeout(self):
+        from capabilities import ProbeError
+        with patch('capabilities.trusted_executable', return_value=None):
+            self.assertEqual(identity.module_inventory('example.el9')['disk_probe'],
+                             {'attempts': [], 'reason': 'command_missing'})
+        with patch('capabilities.trusted_executable', return_value='/usr/sbin/modinfo'), \
+                patch.object(identity.health, 'run', side_effect=ProbeError('timeout:modinfo')):
+            result = identity.module_inventory('example.el9')
+        self.assertIsNone(result['disk_version'])
+        self.assertEqual(result['disk_probe']['reason'], 'timeout')
+
     def test_mount_modes(self):
         for filesystems, expected in (([], 'unknown'), (['cgroup'], 'v1'), (['cgroup2'], 'v2'),
                                       (['cgroup2', 'cgroup'], 'hybrid')):

@@ -20,8 +20,9 @@ def discover(pid):
             if len(fields) >= 6 and len(fs) >= 3 and fields[4] in SYSTEM_PATHS:
                 mounts[fields[4]] = (fields[2], fs[0], fs[1])
     root = mounts.get('/')
+    retained = [path for path in SYSTEM_PATHS if path in mounts]
     if not root or root[1] != 'ext4':
-        return []
+        return [], retained
     def size(path):
         path = proc / 'root' / path.lstrip('/')
         info = os.statvfs(path)
@@ -35,7 +36,7 @@ def discover(pid):
                     aliases.append(path)
             except OSError:
                 continue
-    return aliases
+    return aliases, [path for path in retained if path not in aliases]
 
 
 def prepare(original, aliases, host, live_flags=True):

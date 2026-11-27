@@ -1,4 +1,4 @@
-# Better Stack installer — candidata rc53
+# Better Stack installer — candidata rc54
 
 Para VPS dedicados con la base esencial instalada, usar `preflight --dedicated-host` y `upgrade --dedicated-host`. Este perfil conserva las métricas del host, almacenamiento y salud del colector. Omite lectores por cuenta, diagnóstico dirigido y cierres LVE.
 
