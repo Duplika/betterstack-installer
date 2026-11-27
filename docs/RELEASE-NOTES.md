@@ -1,3 +1,7 @@
+## 4.0.0-rc54
+
+El inventario programado registra el nombre, código de salida y resultado de cada consulta de versión en disco para el kernel activo. Prueba también el nombre alternativo del módulo si la primera consulta falla. El preflight de deduplicación distingue montajes con capacidad propia de los alias de la raíz. Una migración con deduplicación activa conserva su configuración revisada.
+
 ## 4.0.0-rc53
 
 La identidad incluye kernel y cgroups cada 24 h y al cambiar de arranque. En ediciones CloudLinux con LVE se comparan el módulo cargado y la versión disponible para el kernel activo. Los fallos de sondas opcionales quedan identificados. El perfil dedicado omite los dos indicadores estáticos por ciclo.

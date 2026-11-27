@@ -135,16 +135,35 @@ def module_inventory(kernel):
             value['loaded_version'] = version((modules / loaded / 'version').read_text())
         except OSError:
             pass
+    attempts = []
+    value['disk_probe'] = {'attempts': attempts, 'reason': 'command_missing'}
     try:
         command = trusted_executable('modinfo')
-        for name in ((loaded,) if loaded else names):
-            if command:
+    except (OSError, ProbeError):
+        command = None
+        value['disk_probe']['reason'] = 'command_unavailable'
+    if command:
+        for name in dict.fromkeys(filter(None, (loaded, *names))):
+            attempt = {'module': name, 'exit_code': None}
+            attempts.append(attempt)
+            try:
                 result = health.run([command, '-k', kernel, '-F', 'version', name], timeout=4)
-                if result.returncode == 0 and version(result.stdout):
+                attempt['exit_code'] = result.returncode
+                if result.returncode:
+                    reason = 'module_not_found' if 'not found' in result.stderr.lower() else 'command_failed'
+                else:
                     value['disk_version'] = version(result.stdout)
-                    break
-    except (OSError, ValueError, ProbeError, subprocess.TimeoutExpired):
-        pass
+                    reason = 'ok' if value['disk_version'] else 'missing_or_invalid_version'
+            except subprocess.TimeoutExpired:
+                reason = 'timeout'
+            except ProbeError as error:
+                reason = {'timeout': 'timeout', 'output_limit': 'output_limit'}.get(
+                    str(error).partition(':')[0], 'probe_failed')
+            except (OSError, ValueError):
+                reason = 'probe_failed'
+            attempt['reason'] = value['disk_probe']['reason'] = reason
+            if reason == 'ok':
+                break
     if value['loaded_version'] and value['disk_version']:
         value['comparison'] = 'match' if value['loaded_version'] == value['disk_version'] else 'mismatch'
     return value
